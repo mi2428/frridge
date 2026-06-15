@@ -1,0 +1,56 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: smoke
+  workdir: .frridge
+  defaults:
+    image: frrouting/frr:v8.4.1
+    privileged: true
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+
+routers:
+  rt1:
+    loopbacks:
+      - 10.255.0.1/32
+    commands:
+      - kind: shell
+        run: |
+          ip route replace 10.255.0.2/32 via 192.0.2.1 dev eth1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rt1
+          router bgp 65000
+           bgp router-id 10.255.0.1
+           no bgp default ipv4-unicast
+          end
+
+  rt2:
+    loopbacks:
+      - 10.255.0.2/32
+    commands:
+      - kind: shell
+        run: |
+          ip route replace 10.255.0.1/32 via 192.0.2.0 dev eth1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rt2
+          router bgp 65000
+           bgp router-id 10.255.0.2
+           no bgp default ipv4-unicast
+          end
+
+links:
+  - name: fabric
+    type: bridge
+    mtu: 1500
+    members:
+      - router: rt1
+        ifname: eth1
+        ipv4: 192.0.2.0/31
+      - router: rt2
+        ifname: eth1
+        ipv4: 192.0.2.1/31
