@@ -34,3 +34,4 @@ This example collapses each domain into one border router and models option C as
 ### Reachability
 
 - `pings:` in `lab.yaml` checks routed reachability from the AS 65001 host to the AS 65002 host.
+- Right after `up`, give BGP a short moment to converge before treating the first ping result as final.
