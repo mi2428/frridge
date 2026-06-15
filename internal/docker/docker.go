@@ -68,21 +68,20 @@ type ExecResult struct {
 	ExitCode int
 }
 
-// SDKClient implements Client using github.com/docker/docker.
-type SDKClient struct {
+type sdkClient struct {
 	api *client.Client
 }
 
 // New constructs a Docker SDK client configured from the current environment.
-func New() (*SDKClient, error) {
+func New() (Client, error) {
 	api, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
-	return &SDKClient{api: api}, nil
+	return &sdkClient{api: api}, nil
 }
 
-func (c *SDKClient) CreateContainer(ctx context.Context, spec ContainerSpec) (string, error) {
+func (c *sdkClient) CreateContainer(ctx context.Context, spec ContainerSpec) (string, error) {
 	if err := c.ensureImage(ctx, spec.Image); err != nil {
 		return "", err
 	}
@@ -112,14 +111,14 @@ func (c *SDKClient) CreateContainer(ctx context.Context, spec ContainerSpec) (st
 	return response.ID, nil
 }
 
-func (c *SDKClient) StartContainer(ctx context.Context, id string) error {
+func (c *sdkClient) StartContainer(ctx context.Context, id string) error {
 	if err := c.api.ContainerStart(ctx, id, containerapi.StartOptions{}); err != nil {
 		return fmt.Errorf("docker start failed: %w", err)
 	}
 	return nil
 }
 
-func (c *SDKClient) InspectContainer(ctx context.Context, id string) (Inspect, error) {
+func (c *sdkClient) InspectContainer(ctx context.Context, id string) (Inspect, error) {
 	inspect, err := c.api.ContainerInspect(ctx, id)
 	if err != nil {
 		return Inspect{}, fmt.Errorf("docker inspect failed: %w", err)
@@ -131,7 +130,7 @@ func (c *SDKClient) InspectContainer(ctx context.Context, id string) (Inspect, e
 	}, nil
 }
 
-func (c *SDKClient) ListContainers(ctx context.Context, labels map[string]string) ([]string, error) {
+func (c *sdkClient) ListContainers(ctx context.Context, labels map[string]string) ([]string, error) {
 	containers, err := c.api.ContainerList(ctx, containerapi.ListOptions{
 		All:     true,
 		Filters: labelFilters(labels),
@@ -147,7 +146,7 @@ func (c *SDKClient) ListContainers(ctx context.Context, labels map[string]string
 	return ids, nil
 }
 
-func (c *SDKClient) RemoveContainer(ctx context.Context, id string) error {
+func (c *sdkClient) RemoveContainer(ctx context.Context, id string) error {
 	err := c.api.ContainerRemove(ctx, id, containerapi.RemoveOptions{
 		Force: true,
 	})
@@ -157,7 +156,7 @@ func (c *SDKClient) RemoveContainer(ctx context.Context, id string) error {
 	return fmt.Errorf("docker remove failed: %w", err)
 }
 
-func (c *SDKClient) Exec(ctx context.Context, id string, cmd []string) (ExecResult, error) {
+func (c *sdkClient) Exec(ctx context.Context, id string, cmd []string) (ExecResult, error) {
 	execID, err := c.createExec(ctx, id, cmd, false)
 	if err != nil {
 		return ExecResult{}, err
@@ -187,7 +186,7 @@ func (c *SDKClient) Exec(ctx context.Context, id string, cmd []string) (ExecResu
 	}, nil
 }
 
-func (c *SDKClient) ExecInteractive(ctx context.Context, id string, cmd []string) error {
+func (c *sdkClient) ExecInteractive(ctx context.Context, id string, cmd []string) error {
 	stdinTTY := term.IsTerminal(int(os.Stdin.Fd()))
 	// Docker only needs a TTY on the container side. Keeping TTY enabled when
 	// stdout is interactive but stdin is piped makes console wrappers such as
@@ -238,7 +237,7 @@ func (c *SDKClient) ExecInteractive(ctx context.Context, id string, cmd []string
 	return nil
 }
 
-func (c *SDKClient) ensureImage(ctx context.Context, image string) error {
+func (c *sdkClient) ensureImage(ctx context.Context, image string) error {
 	if strings.TrimSpace(image) == "" {
 		return fmt.Errorf("container image must not be empty")
 	}
@@ -263,7 +262,7 @@ func (c *SDKClient) ensureImage(ctx context.Context, image string) error {
 	return nil
 }
 
-func (c *SDKClient) createExec(ctx context.Context, id string, cmd []string, tty bool) (string, error) {
+func (c *sdkClient) createExec(ctx context.Context, id string, cmd []string, tty bool) (string, error) {
 	response, err := c.api.ContainerExecCreate(ctx, id, containerapi.ExecOptions{
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -279,7 +278,7 @@ func (c *SDKClient) createExec(ctx context.Context, id string, cmd []string, tty
 
 // attachResize keeps the Docker exec PTY aligned with the user's current
 // terminal size so fullscreen terminal apps and line editing behave normally.
-func (c *SDKClient) attachResize(ctx context.Context, execID string) error {
+func (c *sdkClient) attachResize(ctx context.Context, execID string) error {
 	width, height, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		return fmt.Errorf("get terminal size: %w", err)

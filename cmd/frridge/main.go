@@ -1,3 +1,4 @@
+// Binary frridge is the Linux-native CLI entry point.
 package main
 
 import (

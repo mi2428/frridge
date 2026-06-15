@@ -1,3 +1,4 @@
+// Binary frridge-mp is the Multipass-backed CLI entry point.
 package main
 
 import (

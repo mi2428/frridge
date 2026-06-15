@@ -39,7 +39,7 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	ensureCmd := &cobra.Command{
 		Use:   "ensure",
 		Short: "Create or update the Multipass VM and guest-local frridge binary",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := service.Ensure(cmd.Context(), req)
 			if err != nil {
 				return err
@@ -59,7 +59,7 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	shellCmd := &cobra.Command{
 		Use:   "shell",
 		Short: "Open a shell inside the guest at the mounted host workspace",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return service.Shell(cmd.Context(), req)
 		},
 	}
@@ -78,7 +78,7 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	upCmd := &cobra.Command{
 		Use:   "up",
 		Short: "Create containers, links, and initial router state inside the guest",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(topologyPath) == "" {
 				return fmt.Errorf("up requires --file")
 			}
@@ -106,7 +106,7 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	downCmd := &cobra.Command{
 		Use:   "down",
 		Short: "Remove containers and runtime networking inside the guest",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(topologyPath) == "" {
 				return fmt.Errorf("down requires --file")
 			}

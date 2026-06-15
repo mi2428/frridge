@@ -17,15 +17,14 @@ type Manager interface {
 	DeleteLink(name string) error
 }
 
-// NetlinkManager implements Manager using github.com/vishvananda/netlink.
-type NetlinkManager struct{}
+type manager struct{}
 
 // New returns a netlink-backed networking manager.
-func New() *NetlinkManager {
-	return &NetlinkManager{}
+func New() Manager {
+	return &manager{}
 }
 
-func (m *NetlinkManager) EnsureBridge(name string, mtu int) error {
+func (m *manager) EnsureBridge(name string, mtu int) error {
 	link, err := vnetlink.LinkByName(name)
 	if err != nil {
 		if _, ok := errors.AsType[vnetlink.LinkNotFoundError](err); !ok {
@@ -55,7 +54,7 @@ func (m *NetlinkManager) EnsureBridge(name string, mtu int) error {
 	return nil
 }
 
-func (m *NetlinkManager) CreateBridgeAttachment(bridgeName, hostIfName, peerIfName string, peerPID, mtu int) error {
+func (m *manager) CreateBridgeAttachment(bridgeName, hostIfName, peerIfName string, peerPID, mtu int) error {
 	if err := m.createVeth(hostIfName, peerIfName, mtu); err != nil {
 		return err
 	}
@@ -89,7 +88,7 @@ func (m *NetlinkManager) CreateBridgeAttachment(bridgeName, hostIfName, peerIfNa
 	return nil
 }
 
-func (m *NetlinkManager) CreateP2PAttachment(aIfName string, aPID int, bIfName string, bPID int, mtu int) error {
+func (m *manager) CreateP2PAttachment(aIfName string, aPID int, bIfName string, bPID int, mtu int) error {
 	if err := m.createVeth(aIfName, bIfName, mtu); err != nil {
 		return err
 	}
@@ -112,7 +111,7 @@ func (m *NetlinkManager) CreateP2PAttachment(aIfName string, aPID int, bIfName s
 	return nil
 }
 
-func (m *NetlinkManager) DeleteLink(name string) error {
+func (m *manager) DeleteLink(name string) error {
 	link, err := vnetlink.LinkByName(name)
 	if err != nil {
 		if _, ok := errors.AsType[vnetlink.LinkNotFoundError](err); ok {
@@ -127,7 +126,7 @@ func (m *NetlinkManager) DeleteLink(name string) error {
 	return nil
 }
 
-func (m *NetlinkManager) createVeth(name, peer string, mtu int) error {
+func (m *manager) createVeth(name, peer string, mtu int) error {
 	attrs := vnetlink.NewLinkAttrs()
 	attrs.Name = name
 	if mtu > 0 {

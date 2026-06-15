@@ -29,7 +29,7 @@ func NewRootCommand(service labruntime.Service) *cobra.Command {
 	upCmd := &cobra.Command{
 		Use:   "up",
 		Short: "Create containers, links, and initial router state",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if topologyPath == "" {
 				return fmt.Errorf("up requires --file")
 			}
@@ -46,7 +46,7 @@ func NewRootCommand(service labruntime.Service) *cobra.Command {
 	downCmd := &cobra.Command{
 		Use:   "down",
 		Short: "Remove containers and runtime networking for a lab",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if topologyPath == "" {
 				return fmt.Errorf("down requires --file")
 			}
