@@ -1,5 +1,7 @@
 .build/
 **/.frridge/
+bin/
+dist/
 
 # Created by https://www.toptal.com/developers/gitignore/api/macos,vim,visualstudiocode,go
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,vim,visualstudiocode,go

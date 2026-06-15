@@ -1,16 +1,15 @@
-// Package app defines the Cobra command tree for frridge.
-package app
+package main
 
 import (
 	"fmt"
 
+	"frridge/internal/buildinfo"
 	labruntime "frridge/internal/runtime"
 
 	"github.com/spf13/cobra"
 )
 
-// NewRootCommand builds the frridge CLI around a lab runtime service.
-func NewRootCommand(service labruntime.Service) *cobra.Command {
+func newRootCommand(service labruntime.Service) *cobra.Command {
 	var topologyPath string
 	var recreate bool
 	var reseed bool
@@ -20,9 +19,11 @@ func NewRootCommand(service labruntime.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "frridge",
 		Short:         "FRR lab runner for container-based network study",
+		Version:       buildinfo.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("{{printf \"%s %s\\n\" .Name .Version}}")
 
 	root.PersistentFlags().StringVarP(&topologyPath, "file", "f", "", "Path to lab YAML")
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"frridge/internal/buildinfo"
 	"frridge/internal/multipass"
 )
 
@@ -154,5 +155,24 @@ links:
 	cmd.SetArgs([]string{"up", "--file", topologyPath})
 	if err := cmd.Execute(); err == nil {
 		t.Fatalf("Execute() error = nil, want host-dir coverage failure")
+	}
+}
+
+func TestRootCommandPrintsVersion(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeService{}
+	cmd := newRootCommand(service)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--version"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got, want := stdout.String(), "frridge-mp "+buildinfo.Version+"\n"; got != want {
+		t.Fatalf("version output = %q, want %q", got, want)
 	}
 }

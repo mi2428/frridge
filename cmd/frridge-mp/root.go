@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"frridge/internal/buildinfo"
 	"frridge/internal/config"
 	"frridge/internal/multipass"
 
@@ -23,9 +24,11 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "frridge-mp",
 		Short:         "Run frridge labs inside a Multipass Linux VM",
+		Version:       buildinfo.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("{{printf \"%s %s\\n\" .Name .Version}}")
 
 	flags := root.PersistentFlags()
 	flags.StringVar(&req.Instance.Name, "instance", "", "Multipass instance name")

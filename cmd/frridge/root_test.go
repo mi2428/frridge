@@ -1,10 +1,11 @@
-package app
+package main
 
 import (
 	"bytes"
 	"context"
 	"testing"
 
+	"frridge/internal/buildinfo"
 	labruntime "frridge/internal/runtime"
 )
 
@@ -41,7 +42,7 @@ func TestUpCommandForwardsFlags(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeService{}
-	cmd := NewRootCommand(service)
+	cmd := newRootCommand(service)
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 	cmd.SetArgs([]string{"--file", "lab.yaml", "up", "--recreate", "--reseed"})
@@ -61,7 +62,7 @@ func TestDownCommandRequiresFile(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeService{}
-	cmd := NewRootCommand(service)
+	cmd := newRootCommand(service)
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 	cmd.SetArgs([]string{"down"})
@@ -75,7 +76,7 @@ func TestConsoleCommandAllowsOptionalFile(t *testing.T) {
 	t.Parallel()
 
 	service := &fakeService{}
-	cmd := NewRootCommand(service)
+	cmd := newRootCommand(service)
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
 	cmd.SetArgs([]string{"console", "rt1", "--shell"})
@@ -88,5 +89,24 @@ func TestConsoleCommandAllowsOptionalFile(t *testing.T) {
 	}
 	if !service.consoleOpts.Shell {
 		t.Fatalf("consoleOpts = %+v, want shell=true", service.consoleOpts)
+	}
+}
+
+func TestRootCommandPrintsVersion(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeService{}
+	cmd := newRootCommand(service)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--version"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got, want := stdout.String(), "frridge "+buildinfo.Version+"\n"; got != want {
+		t.Fatalf("version output = %q, want %q", got, want)
 	}
 }

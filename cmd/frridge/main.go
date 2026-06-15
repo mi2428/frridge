@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"frridge/internal/app"
 	labruntime "frridge/internal/runtime"
 )
 
@@ -16,7 +15,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	root := app.NewRootCommand(service)
+	root := newRootCommand(service)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
