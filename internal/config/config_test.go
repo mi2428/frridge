@@ -147,3 +147,13 @@ links:
 		t.Fatalf("Digest mismatch: %q != %q", digest1, digest2)
 	}
 }
+
+func TestResolveWorkDirHonorsOverrideEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	override := filepath.Join(tmpDir, "guest-state")
+	t.Setenv(WorkDirOverrideEnv, override)
+
+	if got, want := ResolveWorkDir(filepath.Join(tmpDir, "lab"), "ignored"), override; got != want {
+		t.Fatalf("ResolveWorkDir() = %q, want %q", got, want)
+	}
+}

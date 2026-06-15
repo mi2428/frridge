@@ -22,6 +22,9 @@ const (
 	APIVersion = "frridge/v1alpha1"
 	// DefaultWorkDir is used when lab.workdir is omitted in the topology.
 	DefaultWorkDir = ".frridge"
+	// WorkDirOverrideEnv lets wrappers such as frridge-mp move generated lab
+	// state onto a guest-local filesystem without rewriting the topology file.
+	WorkDirOverrideEnv = "FRRIDGE_WORKDIR_OVERRIDE"
 )
 
 var sysctlKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
@@ -318,14 +321,7 @@ func (t *Topology) BaseDir() string {
 // WorkDirPath returns the absolute workspace directory used for generated lab
 // state, defaulting to DefaultWorkDir relative to the topology.
 func (t *Topology) WorkDirPath() string {
-	workDir := strings.TrimSpace(t.Lab.WorkDir)
-	if workDir == "" {
-		workDir = DefaultWorkDir
-	}
-	if filepath.IsAbs(workDir) {
-		return workDir
-	}
-	return filepath.Join(t.baseDir, workDir)
+	return ResolveWorkDir(t.baseDir, t.Lab.WorkDir)
 }
 
 // LabDir returns the per-lab working directory below WorkDirPath.
@@ -365,6 +361,22 @@ func (t *Topology) ResolvePath(path string) string {
 		return path
 	}
 	return filepath.Join(t.baseDir, path)
+}
+
+// ResolveWorkDir computes the generated-state root for one topology base
+// directory, honoring WorkDirOverrideEnv before the YAML field.
+func ResolveWorkDir(baseDir, configured string) string {
+	workDir := strings.TrimSpace(os.Getenv(WorkDirOverrideEnv))
+	if workDir == "" {
+		workDir = strings.TrimSpace(configured)
+	}
+	if workDir == "" {
+		workDir = DefaultWorkDir
+	}
+	if filepath.IsAbs(workDir) {
+		return workDir
+	}
+	return filepath.Join(baseDir, workDir)
 }
 
 // Digest returns a stable hash of the topology content used in Docker labels

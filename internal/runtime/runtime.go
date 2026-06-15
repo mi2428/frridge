@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	goruntime "runtime"
 	"slices"
 	"sort"
@@ -464,7 +463,7 @@ func (m *Manager) lookupConsoleContainer(ctx context.Context, topologyPath, rout
 		return "", fmt.Errorf("get current directory: %w", err)
 	}
 
-	snapshots, err := state.ScanWorkDir(filepath.Join(cwd, config.DefaultWorkDir))
+	snapshots, err := state.ScanWorkDir(config.ResolveWorkDir(cwd, ""))
 	if err != nil {
 		return "", err
 	}
