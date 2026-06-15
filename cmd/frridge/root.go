@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"frridge/internal/buildinfo"
 	labruntime "frridge/internal/runtime"
@@ -72,5 +73,57 @@ func newRootCommand(service labruntime.Service) *cobra.Command {
 	consoleCmd.Flags().BoolVar(&shell, "shell", false, "Open /bin/sh instead of vtysh")
 	root.AddCommand(consoleCmd)
 
+	pingCmd := &cobra.Command{
+		Use:   "ping [check]",
+		Short: "Run YAML-defined ping checks and print the raw ping output",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if topologyPath == "" {
+				return fmt.Errorf("ping requires --file")
+			}
+
+			name := ""
+			if len(args) == 1 {
+				name = args[0]
+			}
+
+			results, err := service.Ping(cmd.Context(), topologyPath, name)
+			if err != nil {
+				return err
+			}
+
+			failures := 0
+			for i, result := range results {
+				if len(results) > 1 {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "== %s (%s -> %s) ==\n", result.Name, pingSource(result), result.Target)
+				}
+				if result.Output != "" {
+					_, _ = fmt.Fprint(cmd.OutOrStdout(), result.Output)
+					if !strings.HasSuffix(result.Output, "\n") {
+						_, _ = fmt.Fprintln(cmd.OutOrStdout())
+					}
+				}
+				if len(results) > 1 && i < len(results)-1 {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout())
+				}
+				if result.ExitCode != 0 {
+					failures++
+				}
+			}
+			if failures > 0 {
+				return fmt.Errorf("%d ping check(s) failed", failures)
+			}
+			return nil
+		},
+	}
+	root.AddCommand(pingCmd)
+
 	return root
+}
+
+func pingSource(result labruntime.PingResult) string {
+	if result.Namespace == "" {
+		return result.Router
+	}
+	return result.Router + "/" + result.Namespace
 }

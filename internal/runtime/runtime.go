@@ -34,6 +34,7 @@ type Service interface {
 	Up(ctx context.Context, topologyPath string, opts UpOptions) error
 	Down(ctx context.Context, topologyPath string, opts DownOptions) error
 	Console(ctx context.Context, topologyPath string, router string, opts ConsoleOptions) error
+	Ping(ctx context.Context, topologyPath string, name string) ([]PingResult, error)
 }
 
 // UpOptions controls how strictly Up reconciles existing generated state.
@@ -50,6 +51,17 @@ type DownOptions struct {
 // ConsoleOptions chooses which process is opened inside a running router.
 type ConsoleOptions struct {
 	Shell bool
+}
+
+// PingResult captures one YAML-defined ping check and the raw command output
+// produced when it ran inside the source container.
+type PingResult struct {
+	Name      string
+	Router    string
+	Namespace string
+	Target    string
+	Output    string
+	ExitCode  int
 }
 
 // Manager implements Service by coordinating Docker, netlink, and generated
@@ -217,6 +229,44 @@ func (m *Manager) Console(ctx context.Context, topologyPath, router string, opts
 		command = []string{"/bin/sh"}
 	}
 	return m.docker.ExecInteractive(ctx, containerID, command)
+}
+
+// Ping runs one or all YAML-defined ping checks and returns the raw ping output
+// for the CLI to print unchanged.
+func (m *Manager) Ping(ctx context.Context, topologyPath string, name string) ([]PingResult, error) {
+	topology, err := config.LoadFile(topologyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	checks, err := selectPingChecks(topology.Pings, name)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]PingResult, 0, len(checks))
+	for _, check := range checks {
+		containerID, err := m.lookupRouterContainer(ctx, topology, check.From.Router)
+		if err != nil {
+			return results, err
+		}
+
+		execResult, err := m.docker.Exec(ctx, containerID, pingCommand(check))
+		if err != nil {
+			return results, fmt.Errorf("ping %q failed to start: %w", check.Name, err)
+		}
+
+		results = append(results, PingResult{
+			Name:      check.Name,
+			Router:    check.From.Router,
+			Namespace: check.From.Namespace,
+			Target:    check.To,
+			Output:    combineExecOutput(execResult),
+			ExitCode:  execResult.ExitCode,
+		})
+	}
+
+	return results, nil
 }
 
 func (m *Manager) runtimeExists(ctx context.Context, topology *config.Topology) (bool, error) {
@@ -435,27 +485,7 @@ func (m *Manager) lookupConsoleContainer(ctx context.Context, topologyPath, rout
 		if err != nil {
 			return "", err
 		}
-		if snapshot, err := state.Read(topology.StatePath()); err == nil {
-			if container, ok := snapshot.Containers[router]; ok {
-				return container.ID, nil
-			}
-		}
-
-		containers, err := m.docker.ListContainers(ctx, map[string]string{
-			labelManaged: "true",
-			labelLab:     topology.Lab.Name,
-			labelRouter:  router,
-		})
-		if err != nil {
-			return "", err
-		}
-		if len(containers) == 0 {
-			return "", fmt.Errorf("router %q is not running in lab %q", router, topology.Lab.Name)
-		}
-		if len(containers) > 1 {
-			return "", fmt.Errorf("router %q is ambiguous in lab %q", router, topology.Lab.Name)
-		}
-		return containers[0], nil
+		return m.lookupRouterContainer(ctx, topology, router)
 	}
 
 	cwd, err := os.Getwd()
@@ -482,6 +512,30 @@ func (m *Manager) lookupConsoleContainer(ctx context.Context, topologyPath, rout
 		return "", fmt.Errorf("router %q exists in multiple labs; pass --file to disambiguate", router)
 	}
 	return matches[0], nil
+}
+
+func (m *Manager) lookupRouterContainer(ctx context.Context, topology *config.Topology, router string) (string, error) {
+	if snapshot, err := state.Read(topology.StatePath()); err == nil {
+		if container, ok := snapshot.Containers[router]; ok {
+			return container.ID, nil
+		}
+	}
+
+	containers, err := m.docker.ListContainers(ctx, map[string]string{
+		labelManaged: "true",
+		labelLab:     topology.Lab.Name,
+		labelRouter:  router,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(containers) == 0 {
+		return "", fmt.Errorf("router %q is not running in lab %q", router, topology.Lab.Name)
+	}
+	if len(containers) > 1 {
+		return "", fmt.Errorf("router %q is ambiguous in lab %q", router, topology.Lab.Name)
+	}
+	return containers[0], nil
 }
 
 func (m *Manager) configureInterface(ctx context.Context, containerID, tempIfName string, member config.LinkMember, mtu int) error {
@@ -555,6 +609,46 @@ func vtyshWriteFailure(result docker.ExecResult) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func selectPingChecks(checks []config.Ping, name string) ([]config.Ping, error) {
+	if len(checks) == 0 {
+		return nil, fmt.Errorf("topology does not define any pings")
+	}
+	if strings.TrimSpace(name) == "" {
+		return append([]config.Ping(nil), checks...), nil
+	}
+
+	for _, check := range checks {
+		if check.Name == name {
+			return []config.Ping{check}, nil
+		}
+	}
+	return nil, fmt.Errorf("ping %q not found in topology", name)
+}
+
+func pingCommand(check config.Ping) []string {
+	count := check.Count
+	if count == 0 {
+		count = 3
+	}
+
+	command := []string{"ping", "-c", strconv.Itoa(count), "-W", "1", check.To}
+	if strings.TrimSpace(check.From.Namespace) == "" {
+		return command
+	}
+
+	return append([]string{"ip", "netns", "exec", check.From.Namespace}, command...)
+}
+
+func combineExecOutput(result docker.ExecResult) string {
+	if result.Stderr == "" {
+		return result.Stdout
+	}
+	if result.Stdout == "" {
+		return result.Stderr
+	}
+	return result.Stdout + result.Stderr
 }
 
 func (m *Manager) runExec(ctx context.Context, containerID string, cmd []string, operation string) error {

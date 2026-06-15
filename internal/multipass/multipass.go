@@ -267,11 +267,17 @@ func (m *Manager) ensure(ctx context.Context, req resolvedRequest) (Environment,
 	if err := m.bootstrapGuest(ctx, env); err != nil {
 		return Environment{}, err
 	}
-	if err := m.cli.Transfer(ctx, build.Path, req.instance.Name+":"+env.GuestBinary); err != nil {
+	stagedBinary := path.Join(env.GuestBinaryDir, fmt.Sprintf(".frridge-%d.tmp", os.Getpid()))
+	if err := m.cli.Transfer(ctx, build.Path, req.instance.Name+":"+stagedBinary); err != nil {
 		return Environment{}, err
 	}
 	if err := m.cli.Exec(ctx, req.instance.Name, ExecSpec{
-		Command: []string{"chmod", "0755", env.GuestBinary},
+		Command: []string{"chmod", "0755", stagedBinary},
+	}); err != nil {
+		return Environment{}, err
+	}
+	if err := m.cli.Exec(ctx, req.instance.Name, ExecSpec{
+		Command: []string{"mv", stagedBinary, env.GuestBinary},
 	}); err != nil {
 		return Environment{}, err
 	}

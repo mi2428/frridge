@@ -157,3 +157,76 @@ func TestResolveWorkDirHonorsOverrideEnv(t *testing.T) {
 		t.Fatalf("ResolveWorkDir() = %q, want %q", got, want)
 	}
 }
+
+func TestValidateAcceptsNamedPingChecks(t *testing.T) {
+	t.Parallel()
+
+	topology := &Topology{
+		APIVersion: APIVersion,
+		Lab:        Lab{Name: "ping-lab", Defaults: Defaults{Image: "frr"}},
+		Routers: map[string]Router{
+			"r1": {},
+			"r2": {},
+		},
+		Links: []Link{
+			{
+				Name: "fabric",
+				Type: "p2p",
+				Members: []LinkMember{
+					{Router: "r1", IfName: "eth1"},
+					{Router: "r2", IfName: "eth1"},
+				},
+			},
+		},
+		Pings: []Ping{
+			{
+				Name: "r1-to-r2",
+				From: PingSource{
+					Router:    "r1",
+					Namespace: "host",
+				},
+				To:    "192.0.2.2",
+				Count: 3,
+			},
+		},
+	}
+
+	if err := topology.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsPingWithoutSourceRouter(t *testing.T) {
+	t.Parallel()
+
+	topology := &Topology{
+		APIVersion: APIVersion,
+		Lab:        Lab{Name: "ping-lab", Defaults: Defaults{Image: "frr"}},
+		Routers: map[string]Router{
+			"r1": {},
+			"r2": {},
+		},
+		Links: []Link{
+			{
+				Name: "fabric",
+				Type: "p2p",
+				Members: []LinkMember{
+					{Router: "r1", IfName: "eth1"},
+					{Router: "r2", IfName: "eth1"},
+				},
+			},
+		},
+		Pings: []Ping{
+			{
+				Name: "bad",
+				From: PingSource{Router: "missing"},
+				To:   "192.0.2.2",
+			},
+		},
+	}
+
+	err := topology.Validate()
+	if err == nil || !strings.Contains(err.Error(), `undefined source router "missing"`) {
+		t.Fatalf("Validate() error = %v, want undefined source router error", err)
+	}
+}

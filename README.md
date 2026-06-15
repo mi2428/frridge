@@ -47,6 +47,7 @@ Available Commands:
   console     Open vtysh or a shell inside a running router container
   down        Remove containers and runtime networking for a lab
   help        Help about any command
+  ping        Run YAML-defined ping checks and print the raw ping output
   up          Create containers, links, and initial router state
 
 Flags:
@@ -61,12 +62,15 @@ Create a lab, enter a router, and tear it down again:
 
 ```console
 $ sudo frridge up -f lab.yaml
+$ sudo frridge ping -f lab.yaml
+$ sudo frridge ping -f lab.yaml lf1-host-to-lf2-host
 $ sudo frridge console rt1 -f lab.yaml
 $ sudo frridge console rt1 -f lab.yaml --shell
 $ sudo frridge down -f lab.yaml --purge
 ```
 
 `up` creates containers, wires links, applies optional shell commands, and runs first-boot `vtysh` seed commands.
+`ping` runs the named checks from top-level `pings:` and prints the underlying `ping(8)` output unchanged.
 `console` opens `vtysh` by default.
 `down --purge` also removes generated lab files under `lab.workdir`.
 
@@ -89,6 +93,7 @@ Available Commands:
   ensure      Create or update the Multipass VM and guest-local frridge binary
   exec        Run an arbitrary command inside the guest workspace
   help        Help about any command
+  ping        Run YAML-defined ping checks inside the guest
   shell       Open a shell inside the guest at the mounted host workspace
   up          Create containers, links, and initial router state inside the guest
 
@@ -111,6 +116,7 @@ The common flow is:
 ```console
 $ frridge-mp ensure --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan
 $ frridge-mp up --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file lab.yaml
+$ frridge-mp ping --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file lab.yaml
 $ frridge-mp console --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file lab.yaml rt1
 $ frridge-mp down --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file lab.yaml --purge
 ```
@@ -204,6 +210,16 @@ links:
         ifname: eth2
       - router: host1
         ifname: eth1
+
+# Optional ping checks. These do nothing during `up`; they are only executed
+# when `frridge ping` or `frridge-mp ping` is invoked.
+pings:
+  - name: rt1-to-rt2-loopback   # required; must be unique within the file
+    from:
+      router: rt1               # required; ping runs inside this router container
+      namespace: host           # optional; runs via `ip netns exec <namespace>` when set
+    to: 10.255.0.2              # required; target passed to ping(8) as-is
+    count: 5                    # optional; defaults to 3 when omitted
 ```
 
 ### Minimal Manual Lab

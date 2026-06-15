@@ -17,6 +17,9 @@ type fakeService struct {
 	consolePath string
 	consoleName string
 	consoleOpts labruntime.ConsoleOptions
+	pingPath    string
+	pingName    string
+	pingResults []labruntime.PingResult
 }
 
 func (f *fakeService) Up(_ context.Context, topologyPath string, opts labruntime.UpOptions) error {
@@ -36,6 +39,12 @@ func (f *fakeService) Console(_ context.Context, topologyPath, router string, op
 	f.consoleName = router
 	f.consoleOpts = opts
 	return nil
+}
+
+func (f *fakeService) Ping(_ context.Context, topologyPath, name string) ([]labruntime.PingResult, error) {
+	f.pingPath = topologyPath
+	f.pingName = name
+	return append([]labruntime.PingResult(nil), f.pingResults...), nil
 }
 
 func TestUpCommandForwardsFlags(t *testing.T) {
@@ -108,5 +117,39 @@ func TestRootCommandPrintsVersion(t *testing.T) {
 
 	if got, want := stdout.String(), "frridge "+buildinfo.Version+"\n"; got != want {
 		t.Fatalf("version output = %q, want %q", got, want)
+	}
+}
+
+func TestPingCommandRunsNamedCheckAndPrintsOutput(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeService{
+		pingResults: []labruntime.PingResult{
+			{
+				Name:     "fabric",
+				Router:   "rt1",
+				Target:   "10.0.0.2",
+				Output:   "PING 10.0.0.2\n",
+				ExitCode: 0,
+			},
+		},
+	}
+	cmd := newRootCommand(service)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SetArgs([]string{"--file", "lab.yaml", "ping", "fabric"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := service.pingPath, "lab.yaml"; got != want {
+		t.Fatalf("pingPath = %q, want %q", got, want)
+	}
+	if got, want := service.pingName, "fabric"; got != want {
+		t.Fatalf("pingName = %q, want %q", got, want)
+	}
+	if got := stdout.String(); got != "PING 10.0.0.2\n" {
+		t.Fatalf("stdout = %q, want raw ping output", got)
 	}
 }

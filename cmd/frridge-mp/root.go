@@ -156,6 +156,30 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	consoleCmd.Flags().BoolVar(&shell, "shell", false, "Open /bin/sh instead of vtysh")
 	root.AddCommand(consoleCmd)
 
+	pingCmd := &cobra.Command{
+		Use:   "ping [check]",
+		Short: "Run YAML-defined ping checks inside the guest",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(topologyPath) == "" {
+				return fmt.Errorf("ping requires --file")
+			}
+
+			nextReq, guestFile, err := resolveTopology(cmd, req, topologyPath)
+			if err != nil {
+				return err
+			}
+
+			command := []string{"--file", guestFile, "ping"}
+			if len(args) == 1 {
+				command = append(command, args[0])
+			}
+			return service.Frridge(cmd.Context(), nextReq, command)
+		},
+	}
+	pingCmd.Flags().StringVarP(&topologyPath, "file", "f", "", "Path to lab YAML below --host-dir")
+	root.AddCommand(pingCmd)
+
 	return root
 }
 

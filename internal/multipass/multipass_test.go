@@ -191,8 +191,16 @@ func TestManagerEnsureLaunchesAndTransfersBinary(t *testing.T) {
 	if len(cli.transfers) != 1 {
 		t.Fatalf("len(transfers) = %d, want 1", len(cli.transfers))
 	}
-	if got, want := cli.transfers[0][1], "mp-lab:"+env.GuestBinary; got != want {
-		t.Fatalf("transfer target = %q, want %q", got, want)
+	transferTarget := cli.transfers[0][1]
+	wantPrefix := "mp-lab:" + env.GuestBinaryDir + "/.frridge-"
+	if !strings.HasPrefix(transferTarget, wantPrefix) || !strings.HasSuffix(transferTarget, ".tmp") {
+		t.Fatalf("transfer target = %q, want %q*.tmp", transferTarget, wantPrefix)
+	}
+	if got, want := cli.execs[len(cli.execs)-2].Command, []string{"chmod", "0755", strings.TrimPrefix(transferTarget, "mp-lab:")}; !slices.Equal(got, want) {
+		t.Fatalf("chmod command = %#v, want %#v", got, want)
+	}
+	if got, want := cli.execs[len(cli.execs)-1].Command, []string{"mv", strings.TrimPrefix(transferTarget, "mp-lab:"), env.GuestBinary}; !slices.Equal(got, want) {
+		t.Fatalf("mv command = %#v, want %#v", got, want)
 	}
 }
 

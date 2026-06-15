@@ -36,6 +36,7 @@ type Topology struct {
 	Lab        Lab               `yaml:"lab" json:"lab"`
 	Routers    map[string]Router `yaml:"routers" json:"routers"`
 	Links      []Link            `yaml:"links" json:"links"`
+	Pings      []Ping            `yaml:"pings" json:"pings,omitempty"`
 
 	sourcePath string
 	baseDir    string
@@ -94,6 +95,21 @@ type LinkMember struct {
 	IfName string `yaml:"ifname" json:"ifname"`
 	IPv4   string `yaml:"ipv4" json:"ipv4,omitempty"`
 	MAC    string `yaml:"mac" json:"mac,omitempty"`
+}
+
+// Ping describes one connectivity check that the `frridge ping` command can
+// execute after a lab is up.
+type Ping struct {
+	Name  string     `yaml:"name" json:"name"`
+	From  PingSource `yaml:"from" json:"from"`
+	To    string     `yaml:"to" json:"to"`
+	Count int        `yaml:"count" json:"count,omitempty"`
+}
+
+// PingSource describes where a Ping check should be executed from.
+type PingSource struct {
+	Router    string `yaml:"router" json:"router"`
+	Namespace string `yaml:"namespace" json:"namespace,omitempty"`
 }
 
 // ResolvedRouter is a Router after lab defaults and relative paths have been
@@ -155,6 +171,7 @@ func (t *Topology) Validate() error {
 
 	linkNames := make(map[string]struct{}, len(t.Links))
 	ifNames := make(map[string]map[string]string, len(t.Routers))
+	pingNames := make(map[string]struct{}, len(t.Pings))
 
 	for name, router := range t.Routers {
 		if strings.TrimSpace(name) == "" {
@@ -249,6 +266,26 @@ func (t *Topology) Validate() error {
 					return fmt.Errorf("link %q member %s/%s has invalid mac %q: %w", link.Name, member.Router, member.IfName, member.MAC, err)
 				}
 			}
+		}
+	}
+
+	for _, ping := range t.Pings {
+		if strings.TrimSpace(ping.Name) == "" {
+			return fmt.Errorf("ping name is required")
+		}
+		if _, ok := pingNames[ping.Name]; ok {
+			return fmt.Errorf("duplicate ping name %q", ping.Name)
+		}
+		pingNames[ping.Name] = struct{}{}
+
+		if _, ok := t.Routers[ping.From.Router]; !ok {
+			return fmt.Errorf("ping %q references undefined source router %q", ping.Name, ping.From.Router)
+		}
+		if strings.TrimSpace(ping.To) == "" {
+			return fmt.Errorf("ping %q target must not be empty", ping.Name)
+		}
+		if ping.Count < 0 {
+			return fmt.Errorf("ping %q has invalid count %d", ping.Name, ping.Count)
 		}
 	}
 
@@ -387,11 +424,13 @@ func (t *Topology) Digest() (string, error) {
 		Lab        Lab               `json:"lab"`
 		Routers    map[string]Router `json:"routers"`
 		Links      []Link            `json:"links"`
+		Pings      []Ping            `json:"pings,omitempty"`
 	}{
 		APIVersion: t.APIVersion,
 		Lab:        t.Lab,
 		Routers:    t.Routers,
 		Links:      t.Links,
+		Pings:      t.Pings,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal topology digest payload: %w", err)

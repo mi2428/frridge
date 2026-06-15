@@ -279,3 +279,22 @@ links:
       - router: sp2
         ifname: eth3
         ipv4: 10.0.0.11/31
+
+pings:
+  - name: lf1-host-to-lf2-host
+    from:
+      router: lf1
+      namespace: host
+    to: 10.10.10.12
+
+  - name: lf1-host-to-lf3-host
+    from:
+      router: lf1
+      namespace: host
+    to: 10.10.10.13
+
+  - name: lf2-host-to-lf3-host
+    from:
+      router: lf2
+      namespace: host
+    to: 10.10.10.13

@@ -176,3 +176,26 @@ func TestRootCommandPrintsVersion(t *testing.T) {
 		t.Fatalf("version output = %q, want %q", got, want)
 	}
 }
+
+func TestPingCommandForwardsNamedCheck(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeService{}
+	cmd := newRootCommand(service)
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+
+	topologyPath := filepath.Join(t.TempDir(), "lab.yaml")
+	if err := os.WriteFile(topologyPath, []byte("apiVersion: frridge/v1alpha1\nlab:\n  name: test\n  defaults:\n    image: frr\nrouters:\n  r1: {}\n  r2: {}\nlinks:\n  - name: l1\n    type: p2p\n    members:\n      - { router: r1, ifname: eth1 }\n      - { router: r2, ifname: eth1 }\npings:\n  - name: reachability\n    from:\n      router: r1\n    to: 192.0.2.2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cmd.SetArgs([]string{"ping", "--file", topologyPath, "reachability"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got, want := strings.Join(service.frridgeArgs, "\x00"), strings.Join([]string{"--file", "lab.yaml", "ping", "reachability"}, "\x00"); got != want {
+		t.Fatalf("frridge args = %#v, want %#v", service.frridgeArgs, []string{"--file", "lab.yaml", "ping", "reachability"})
+	}
+}
