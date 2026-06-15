@@ -1,8 +1,6 @@
 # frridge
 
-`frridge` is a portmanteau of FRR and bridge.
-
-A Linux-first FRR lab runner that creates router containers, wires them together with veth pairs and bridges, prepares `/etc/frr`, and stops at the point where you keep configuring the routers yourself.
+A Linux-first FRR lab runner that creates router containers, wires them together with veth pairs and bridges, prepares `/etc/frr`.
 
 ## Installation
 
@@ -127,8 +125,10 @@ $ frridge-mp down --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file l
 This is the supported `frridge` YAML surface. The comments are the contract.
 
 ```yaml
+# Required schema version. This is the only version supported today.
 apiVersion: frridge/v1alpha1     # required; the only schema version supported today
 
+# Lab-wide metadata, runtime state location, and router defaults.
 lab:
   name: clos-manual              # required; used in container names and generated state paths
   workdir: .frridge              # optional; defaults to .frridge relative to this YAML file
@@ -139,6 +139,7 @@ lab:
       net.ipv4.ip_forward: "1"
       net.ipv4.conf.all.rp_filter: "0"
 
+# Router definitions. Each router becomes one container.
 routers:
   rt1:
     hostname: spine1             # optional; defaults to the router key (rt1 here)
@@ -180,6 +181,7 @@ routers:
 
   host1: {}                    # empty router entries are valid and inherit lab.defaults
 
+# Link definitions. Use p2p for point-to-point links and bridge for shared segments.
 links:
   - name: rt1-rt2              # required; must be unique within the file
     type: p2p                  # required; supported values are p2p and bridge
@@ -204,24 +206,30 @@ links:
         ifname: eth1
 ```
 
-### Smallest Useful Lab
+### Minimal Manual Lab
 
-If you want to practice FRR by typing all routing config yourself, keep the YAML to routers plus links and omit `commands` entirely:
+If you want to practice FRR by typing all routing config yourself, keep the YAML to routers plus links and omit `commands` entirely.
+After `up`, enter routers with `frridge console <router>` and configure them by hand.
 
 ```yaml
+# Minimal manual lab. Create the containers and links, then enter all FRR
+# routing config yourself with `frridge console <router>`.
 apiVersion: frridge/v1alpha1
 
+# Lab metadata and default image.
 lab:
   name: clos-manual
   defaults:
     image: frridge-frr:latest
 
+# Empty router entries are enough when you want to configure everything by hand.
 routers:
   sp1: {}
   sp2: {}
   lf1: {}
   lf2: {}
 
+# Clos fabric wiring only. No shell or vtysh seed commands are provided.
 links:
   - name: lf1-sp1
     type: p2p
@@ -244,18 +252,6 @@ links:
       - { router: lf2, ifname: eth2 }
       - { router: sp2, ifname: eth2 }
 ```
-
-After `up`, enter routers with `frridge console <router>` and configure them by hand.
-
-### YAML Semantics
-
-- Relative paths in `lab.workdir` and `mounts[].source` are resolved relative to the topology YAML file, not the current shell directory.
-- `lab.defaults` currently covers only `image`, `privileged`, and `sysctls`.
-- `router.sysctls` override conflicting keys from `lab.defaults.sysctls`.
-- `shell` commands run after links and loopbacks exist.
-- `vtysh` commands run after FRR is ready, append `end` and `write memory` automatically, and do not re-run on a normal restart.
-- Re-run `up --reseed` when you want to rewrite generated `frr.conf` from the YAML `vtysh` commands.
-- `down --purge` removes the generated `lab.workdir/labs/<lab.name>` tree.
 
 ## Development
 
@@ -309,3 +305,7 @@ Examples:
   make dist OS=darwin,linux ARCH=amd64,arm64  # Build release tarballs and checksums
   make release TAG=v0.1.0                     # Publish a GitHub release from local dist artifacts
 ```
+
+## License
+
+MIT.
