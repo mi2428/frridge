@@ -54,7 +54,7 @@ DIST_TAG     ?= $(PACKAGE_VERSION)
 DIST_APP     := $(APP)-$(DIST_TAG)
 
 # Help
-HELP_NAME_WIDTH    := 27
+HELP_NAME_WIDTH    := 17
 HELP_EXAMPLE_WIDTH := 44
 
 ##@ Development
