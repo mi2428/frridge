@@ -1,6 +1,6 @@
 # frridge
 
-A Linux-first FRR lab runner that creates router containers, wires them together with veth pairs and bridges, prepares `/etc/frr`.
+A Linux-first FRR lab runner that creates router containers, wires them together with veth pairs and bridges.
 
 ## Installation
 
