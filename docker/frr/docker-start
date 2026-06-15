@@ -1,0 +1,49 @@
+#!/bin/bash
+set -Ee -o pipefail
+
+readonly init_functions=/lib/lsb/init-functions
+readonly watchfrr=/usr/lib/frr/watchfrr
+
+load_log_helpers() {
+  if [[ -r ${init_functions} ]]; then
+    # shellcheck disable=SC1091
+    source /lib/lsb/init-functions
+    return
+  fi
+
+  log_success_msg() {
+    printf '%s\n' "$*"
+  }
+
+  log_warning_msg() {
+    printf '%s\n' "$*" >&2
+  }
+
+  log_failure_msg() {
+    printf '%s\n' "$*" >&2
+  }
+}
+
+load_frr_common() {
+  # frrcommon.sh and daemon_list intentionally probe unset variables.
+  # shellcheck disable=SC1091
+  source /usr/lib/frr/frrcommon.sh
+}
+
+main() {
+  local enabled_daemons=
+  local _=
+  local -a daemons=()
+
+  load_log_helpers
+  load_frr_common
+
+  daemon_list enabled_daemons _
+  if [[ -n ${enabled_daemons} ]]; then
+    read -r -a daemons <<<"${enabled_daemons}"
+  fi
+
+  exec "${watchfrr}" "${daemons[@]}"
+}
+
+main "$@"
