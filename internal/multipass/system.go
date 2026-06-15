@@ -102,6 +102,8 @@ func (c *systemCLI) Transfer(ctx context.Context, source, target string) error {
 }
 
 func (c *systemCLI) Exec(ctx context.Context, instance string, spec ExecSpec) error {
+	var stderr bytes.Buffer
+
 	cmd := exec.CommandContext(ctx, "multipass", buildExecArgs(instance, spec)...)
 	cmd.Stdin = spec.Stdin
 	if spec.Stdout != nil {
@@ -110,12 +112,12 @@ func (c *systemCLI) Exec(ctx context.Context, instance string, spec ExecSpec) er
 		cmd.Stdout = io.Discard
 	}
 	if spec.Stderr != nil {
-		cmd.Stderr = spec.Stderr
+		cmd.Stderr = io.MultiWriter(spec.Stderr, &stderr)
 	} else {
-		cmd.Stderr = io.Discard
+		cmd.Stderr = &stderr
 	}
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("multipass exec: %w", err)
+		return commandError("multipass exec", err, stderr.String())
 	}
 	return nil
 }

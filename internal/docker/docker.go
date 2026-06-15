@@ -15,12 +15,12 @@ import (
 	"strings"
 	"syscall"
 
+	cerrdefs "github.com/containerd/errdefs"
 	containerapi "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	imageapi "github.com/docker/docker/api/types/image"
 	mountapi "github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 	"golang.org/x/term"
 )
@@ -151,7 +151,7 @@ func (c *SDKClient) RemoveContainer(ctx context.Context, id string) error {
 	err := c.api.ContainerRemove(ctx, id, containerapi.RemoveOptions{
 		Force: true,
 	})
-	if err == nil || errdefs.IsNotFound(err) {
+	if err == nil || cerrdefs.IsNotFound(err) {
 		return nil
 	}
 	return fmt.Errorf("docker remove failed: %w", err)
@@ -247,7 +247,7 @@ func (c *SDKClient) ensureImage(ctx context.Context, image string) error {
 	if err == nil {
 		return nil
 	}
-	if !errdefs.IsNotFound(err) {
+	if !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("docker inspect image failed: %w", err)
 	}
 
