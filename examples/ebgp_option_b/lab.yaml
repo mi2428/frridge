@@ -1,0 +1,100 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: ebgp-inter-as-b
+  workdir: .frridge
+  defaults:
+    image: frridge-frr:latest
+    privileged: true
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+
+routers:
+  as1:
+    loopbacks:
+      - 10.255.1.1/32
+    commands:
+      - kind: shell
+        run: |
+          set -eu
+          ip link add name br10 type bridge
+          ip addr add 10.10.20.1/24 dev br10
+          ip link set dev br10 up
+          ip netns add host
+          ip link add name veth-host type veth peer name veth-netns
+          ip link set dev veth-host master br10
+          ip link set dev veth-host up
+          ip link set dev veth-netns netns host
+          ip netns exec host ip link set dev lo up
+          ip netns exec host ip link set dev veth-netns name eth0
+          ip netns exec host ip link set dev eth0 address 02:00:00:00:b0:11
+          ip netns exec host ip addr add 10.10.20.11/24 dev eth0
+          ip netns exec host ip link set dev eth0 up
+          ip netns exec host ip route replace default via 10.10.20.1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname as1
+          router bgp 65001
+           bgp router-id 10.255.1.1
+           neighbor 192.0.2.1 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.1.1/32
+            network 10.10.20.0/24
+            neighbor 192.0.2.1 activate
+           exit-address-family
+          end
+
+  as2:
+    loopbacks:
+      - 10.255.1.2/32
+    commands:
+      - kind: shell
+        run: |
+          set -eu
+          ip link add name br20 type bridge
+          ip addr add 10.20.20.1/24 dev br20
+          ip link set dev br20 up
+          ip netns add host
+          ip link add name veth-host type veth peer name veth-netns
+          ip link set dev veth-host master br20
+          ip link set dev veth-host up
+          ip link set dev veth-netns netns host
+          ip netns exec host ip link set dev lo up
+          ip netns exec host ip link set dev veth-netns name eth0
+          ip netns exec host ip link set dev eth0 address 02:00:00:00:b0:12
+          ip netns exec host ip addr add 10.20.20.12/24 dev eth0
+          ip netns exec host ip link set dev eth0 up
+          ip netns exec host ip route replace default via 10.20.20.1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname as2
+          router bgp 65002
+           bgp router-id 10.255.1.2
+           neighbor 192.0.2.0 remote-as 65001
+           address-family ipv4 unicast
+            network 10.255.1.2/32
+            network 10.20.20.0/24
+            neighbor 192.0.2.0 activate
+           exit-address-family
+          end
+
+links:
+  - name: border-ip
+    type: p2p
+    members:
+      - router: as1
+        ifname: eth1
+        ipv4: 192.0.2.0/31
+      - router: as2
+        ifname: eth1
+        ipv4: 192.0.2.1/31
+
+pings:
+  - name: as1-host-to-as2-host
+    from:
+      router: as1
+      namespace: host
+    to: 10.20.20.12
