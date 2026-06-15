@@ -18,7 +18,7 @@ import (
 	"frridge/internal/config"
 	"frridge/internal/docker"
 	"frridge/internal/frr"
-	"frridge/internal/netutil"
+	labnetlink "frridge/internal/netlink"
 	"frridge/internal/state"
 )
 
@@ -56,12 +56,12 @@ type ConsoleOptions struct {
 // FRR config files.
 type Manager struct {
 	docker  docker.Client
-	network netutil.Manager
+	network labnetlink.Manager
 }
 
 // NewManager builds a runtime manager from explicit Docker and networking
 // dependencies.
-func NewManager(dockerClient docker.Client, networkManager netutil.Manager) *Manager {
+func NewManager(dockerClient docker.Client, networkManager labnetlink.Manager) *Manager {
 	return &Manager{
 		docker:  dockerClient,
 		network: networkManager,
@@ -75,7 +75,7 @@ func NewDefaultManager() (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewManager(dockerClient, netutil.New()), nil
+	return NewManager(dockerClient, labnetlink.New()), nil
 }
 
 // Up creates or recreates the lab described by topologyPath.
