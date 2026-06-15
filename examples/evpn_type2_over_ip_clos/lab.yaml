@@ -1,0 +1,281 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-clos
+  workdir: .frridge
+  defaults:
+    image: frridge-frr:latest
+    privileged: true
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+
+routers:
+  sp1:
+    loopbacks:
+      - 10.255.0.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp1
+          router bgp 65000
+           bgp router-id 10.255.0.1
+           bgp cluster-id 10.255.0.1
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.0.0 remote-as 65000
+           neighbor 10.0.0.4 remote-as 65000
+           neighbor 10.0.0.8 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.0.1/32
+            neighbor 10.0.0.0 activate
+            neighbor 10.0.0.0 route-reflector-client
+            neighbor 10.0.0.0 next-hop-self force
+            neighbor 10.0.0.4 activate
+            neighbor 10.0.0.4 route-reflector-client
+            neighbor 10.0.0.4 next-hop-self force
+            neighbor 10.0.0.8 activate
+            neighbor 10.0.0.8 route-reflector-client
+            neighbor 10.0.0.8 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.0.0 activate
+            neighbor 10.0.0.0 route-reflector-client
+            neighbor 10.0.0.4 activate
+            neighbor 10.0.0.4 route-reflector-client
+            neighbor 10.0.0.8 activate
+            neighbor 10.0.0.8 route-reflector-client
+           exit-address-family
+          end
+
+  sp2:
+    loopbacks:
+      - 10.255.0.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp2
+          router bgp 65000
+           bgp router-id 10.255.0.2
+           bgp cluster-id 10.255.0.2
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.0.2 remote-as 65000
+           neighbor 10.0.0.6 remote-as 65000
+           neighbor 10.0.0.10 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.0.2/32
+            neighbor 10.0.0.2 activate
+            neighbor 10.0.0.2 route-reflector-client
+            neighbor 10.0.0.2 next-hop-self force
+            neighbor 10.0.0.6 activate
+            neighbor 10.0.0.6 route-reflector-client
+            neighbor 10.0.0.6 next-hop-self force
+            neighbor 10.0.0.10 activate
+            neighbor 10.0.0.10 route-reflector-client
+            neighbor 10.0.0.10 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.0.2 activate
+            neighbor 10.0.0.2 route-reflector-client
+            neighbor 10.0.0.6 activate
+            neighbor 10.0.0.6 route-reflector-client
+            neighbor 10.0.0.10 activate
+            neighbor 10.0.0.10 route-reflector-client
+           exit-address-family
+          end
+
+  lf1:
+    loopbacks:
+      - 10.255.0.11/32
+    commands:
+      - kind: shell
+        run: |
+          set -eu
+          ip link add name br10 type bridge
+          ip link set dev br10 up
+          ip link add name vxlan100 type vxlan id 100 local 10.255.0.11 dstport 4789 nolearning
+          ip link set dev vxlan100 master br10
+          ip link set dev vxlan100 up
+          ip netns add host
+          ip link add name veth-host type veth peer name veth-netns
+          ip link set dev veth-host master br10
+          ip link set dev veth-host up
+          ip link set dev veth-netns netns host
+          ip netns exec host ip link set dev lo up
+          ip netns exec host ip link set dev veth-netns name eth0
+          ip netns exec host ip link set dev eth0 address 02:00:00:00:10:11
+          ip netns exec host ip addr add 10.10.10.11/24 dev eth0
+          ip netns exec host ip link set dev eth0 up
+          ip netns exec host ping -c 1 -W 1 10.10.10.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf1
+          router bgp 65000
+           bgp router-id 10.255.0.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.0.1 remote-as 65000
+           neighbor 10.0.0.3 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.0.11/32
+            neighbor 10.0.0.1 activate
+            neighbor 10.0.0.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.0.1 activate
+            neighbor 10.0.0.3 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  lf2:
+    loopbacks:
+      - 10.255.0.12/32
+    commands:
+      - kind: shell
+        run: |
+          set -eu
+          ip link add name br10 type bridge
+          ip link set dev br10 up
+          ip link add name vxlan100 type vxlan id 100 local 10.255.0.12 dstport 4789 nolearning
+          ip link set dev vxlan100 master br10
+          ip link set dev vxlan100 up
+          ip netns add host
+          ip link add name veth-host type veth peer name veth-netns
+          ip link set dev veth-host master br10
+          ip link set dev veth-host up
+          ip link set dev veth-netns netns host
+          ip netns exec host ip link set dev lo up
+          ip netns exec host ip link set dev veth-netns name eth0
+          ip netns exec host ip link set dev eth0 address 02:00:00:00:10:12
+          ip netns exec host ip addr add 10.10.10.12/24 dev eth0
+          ip netns exec host ip link set dev eth0 up
+          ip netns exec host ping -c 1 -W 1 10.10.10.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf2
+          router bgp 65000
+           bgp router-id 10.255.0.12
+           no bgp default ipv4-unicast
+           neighbor 10.0.0.5 remote-as 65000
+           neighbor 10.0.0.7 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.0.12/32
+            neighbor 10.0.0.5 activate
+            neighbor 10.0.0.7 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.0.5 activate
+            neighbor 10.0.0.7 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  lf3:
+    loopbacks:
+      - 10.255.0.13/32
+    commands:
+      - kind: shell
+        run: |
+          set -eu
+          ip link add name br10 type bridge
+          ip link set dev br10 up
+          ip link add name vxlan100 type vxlan id 100 local 10.255.0.13 dstport 4789 nolearning
+          ip link set dev vxlan100 master br10
+          ip link set dev vxlan100 up
+          ip netns add host
+          ip link add name veth-host type veth peer name veth-netns
+          ip link set dev veth-host master br10
+          ip link set dev veth-host up
+          ip link set dev veth-netns netns host
+          ip netns exec host ip link set dev lo up
+          ip netns exec host ip link set dev veth-netns name eth0
+          ip netns exec host ip link set dev eth0 address 02:00:00:00:10:13
+          ip netns exec host ip addr add 10.10.10.13/24 dev eth0
+          ip netns exec host ip link set dev eth0 up
+          ip netns exec host ping -c 1 -W 1 10.10.10.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf3
+          router bgp 65000
+           bgp router-id 10.255.0.13
+           no bgp default ipv4-unicast
+           neighbor 10.0.0.9 remote-as 65000
+           neighbor 10.0.0.11 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.0.13/32
+            neighbor 10.0.0.9 activate
+            neighbor 10.0.0.11 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.0.9 activate
+            neighbor 10.0.0.11 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+links:
+  - name: lf1-sp1
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth1
+        ipv4: 10.0.0.0/31
+      - router: sp1
+        ifname: eth1
+        ipv4: 10.0.0.1/31
+
+  - name: lf1-sp2
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth2
+        ipv4: 10.0.0.2/31
+      - router: sp2
+        ifname: eth1
+        ipv4: 10.0.0.3/31
+
+  - name: lf2-sp1
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth1
+        ipv4: 10.0.0.4/31
+      - router: sp1
+        ifname: eth2
+        ipv4: 10.0.0.5/31
+
+  - name: lf2-sp2
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth2
+        ipv4: 10.0.0.6/31
+      - router: sp2
+        ifname: eth2
+        ipv4: 10.0.0.7/31
+
+  - name: lf3-sp1
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth1
+        ipv4: 10.0.0.8/31
+      - router: sp1
+        ifname: eth3
+        ipv4: 10.0.0.9/31
+
+  - name: lf3-sp2
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth2
+        ipv4: 10.0.0.10/31
+      - router: sp2
+        ifname: eth3
+        ipv4: 10.0.0.11/31
