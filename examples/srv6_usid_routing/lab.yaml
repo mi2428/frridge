@@ -1,0 +1,95 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: srv6-usid-routing
+  workdir: .frridge
+  defaults:
+    image: nicolaka/netshoot:latest
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv6.conf.all.forwarding: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+
+routers:
+  r1:
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bridges:
+        - name: br10
+          addresses:
+            - 10.10.72.1/24
+          namespaces:
+            - name: host
+              ifname: eth0
+              addresses:
+                - 10.10.72.11/24
+              defaultVia: 10.10.72.1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:72:12::1/64 dev eth1
+          ip link add sr0 type dummy
+          ip link set sr0 up
+          ip -6 route replace fc00:0:2::/48 via 2001:db8:72:12::2 dev eth1
+          ip -6 route replace local fc00:0:101::/48 encap seg6local action End.DX4 nh4 10.10.72.11 dev sr0
+          ip route replace 10.30.72.0/24 encap seg6 mode encap segs fc00:0:2:100:: dev eth1
+
+  r2:
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:72:12::2/64 dev eth1
+          ip -6 addr replace 2001:db8:72:23::2/64 dev eth2
+          ip link add sr0 type dummy
+          ip link set sr0 up
+          ip -6 route replace fc00:0:100::/48 via 2001:db8:72:23::3 dev eth2
+          ip -6 route replace fc00:0:101::/48 via 2001:db8:72:12::1 dev eth1
+          ip -6 route replace local fc00:0:2::/48 encap seg6local action End flavors next-csid lblen 32 nflen 16 dev sr0
+
+  r3:
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bridges:
+        - name: br30
+          addresses:
+            - 10.30.72.1/24
+          namespaces:
+            - name: host
+              ifname: eth0
+              addresses:
+                - 10.30.72.33/24
+              defaultVia: 10.30.72.1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:72:23::3/64 dev eth1
+          ip link add sr0 type dummy
+          ip link set sr0 up
+          ip -6 route replace fc00:0:2::/48 via 2001:db8:72:23::2 dev eth1
+          ip -6 route replace local fc00:0:100::/48 encap seg6local action End.DX4 nh4 10.30.72.33 dev sr0
+          ip route replace 10.10.72.0/24 encap seg6 mode encap segs fc00:0:2:101:: dev eth1
+
+links:
+  - name: r1-r2
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1 }
+      - { router: r2, ifname: eth1 }
+
+  - name: r2-r3
+    type: p2p
+    members:
+      - { router: r2, ifname: eth2 }
+      - { router: r3, ifname: eth1 }
+
+pings:
+  - name: r1-host-to-r3-host
+    from:
+      router: r1
+      namespace: host
+      address: 10.10.72.11
+    to: 10.30.72.33
