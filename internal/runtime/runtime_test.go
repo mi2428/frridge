@@ -7,6 +7,7 @@ import (
 
 	"frridge/internal/config"
 	"frridge/internal/docker"
+	"frridge/internal/frr"
 	"frridge/internal/state"
 )
 
@@ -28,7 +29,8 @@ func TestShortNamesFitLinuxInterfaceLimit(t *testing.T) {
 }
 
 type fakeDockerClient struct {
-	execs [][]string
+	daemons []string
+	execs   [][]string
 }
 
 func (f *fakeDockerClient) CreateContainer(context.Context, docker.ContainerSpec) (string, error) {
@@ -52,6 +54,9 @@ func (f *fakeDockerClient) RemoveContainer(context.Context, string) error {
 }
 
 func (f *fakeDockerClient) Exec(_ context.Context, _ string, cmd []string) (docker.ExecResult, error) {
+	if len(cmd) == 3 && cmd[0] == "vtysh" && cmd[1] == "-c" && cmd[2] == "show daemons" {
+		return docker.ExecResult{ExitCode: 0, Stdout: strings.Join(f.daemons, " ")}, nil
+	}
 	f.execs = append(f.execs, append([]string(nil), cmd...))
 	return docker.ExecResult{ExitCode: 0}, nil
 }
@@ -248,6 +253,53 @@ func TestConfigureLinuxBridgesNamespacesAndRoutes(t *testing.T) {
 		{"ip", "route", "replace", "10.255.0.2/32", "via", "192.0.2.1", "dev", "eth1"},
 	}
 
+	if len(fakeDocker.execs) != len(want) {
+		t.Fatalf("len(execs) = %d, want %d\nexecs=%#v", len(fakeDocker.execs), len(want), fakeDocker.execs)
+	}
+	for i := range want {
+		if got, wantJoined := strings.Join(fakeDocker.execs[i], "\x00"), strings.Join(want[i], "\x00"); got != wantJoined {
+			t.Fatalf("exec[%d] = %#v, want %#v", i, fakeDocker.execs[i], want[i])
+		}
+	}
+}
+
+func TestRunRouterCommandsRespectsConfiguredOrder(t *testing.T) {
+	t.Parallel()
+
+	fakeDocker := &fakeDockerClient{daemons: []string{"zebra", "bgpd", "ospfd", "ospf6d", "isisd", "staticd", "pathd"}}
+	manager := &Manager{docker: fakeDocker}
+	markerPath := t.TempDir() + "/seeded"
+
+	routers := map[string]config.ResolvedRouter{
+		"r1": {
+			Commands: []config.Command{
+				{Kind: "shell", Run: "echo before"},
+				{Kind: "vtysh", Run: "configure terminal\nhostname r1"},
+				{Kind: "shell", Run: "echo after"},
+			},
+		},
+	}
+	snapshot := &state.LabState{
+		Containers: map[string]state.ContainerState{
+			"r1": {ID: "container-1"},
+		},
+	}
+	prepared := map[string]frr.PrepareResult{
+		"r1": {
+			NeedsSeed:  true,
+			MarkerPath: markerPath,
+		},
+	}
+
+	if err := manager.runRouterCommands(context.Background(), routers, snapshot, prepared); err != nil {
+		t.Fatalf("runRouterCommands() error = %v", err)
+	}
+
+	want := [][]string{
+		{"sh", "-lc", "echo before"},
+		{"sh", "-lc", renderVTYSH("configure terminal\nhostname r1")},
+		{"sh", "-lc", "echo after"},
+	}
 	if len(fakeDocker.execs) != len(want) {
 		t.Fatalf("len(execs) = %d, want %d\nexecs=%#v", len(fakeDocker.execs), len(want), fakeDocker.execs)
 	}

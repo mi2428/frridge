@@ -193,10 +193,7 @@ func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (
 	if err := m.configureLinux(ctx, resolvedRouters, snapshot); err != nil {
 		return err
 	}
-	if err := m.runShellCommands(ctx, resolvedRouters, snapshot); err != nil {
-		return err
-	}
-	if err := m.seedRouters(ctx, resolvedRouters, snapshot, prepared); err != nil {
+	if err := m.runRouterCommands(ctx, resolvedRouters, snapshot, prepared); err != nil {
 		return err
 	}
 	if err := state.Write(topology.StatePath(), *snapshot); err != nil {
@@ -453,60 +450,53 @@ func (m *Manager) configureLinuxNamespace(ctx context.Context, containerID, brid
 	return nil
 }
 
-func (m *Manager) runShellCommands(ctx context.Context, routers map[string]config.ResolvedRouter, snapshot *state.LabState) error {
+// runRouterCommands executes startup commands in YAML order. Shell commands
+// always run; vtysh commands run only on the first boot or an explicit reseed.
+func (m *Manager) runRouterCommands(ctx context.Context, routers map[string]config.ResolvedRouter, snapshot *state.LabState, prepared map[string]frr.PrepareResult) error {
 	for _, routerName := range sortedResolvedRouterNames(routers) {
 		container := snapshot.Containers[routerName]
+		waitedForVTYSH := false
+		ranVTYSH := false
+
 		for _, command := range routers[routerName].Commands {
-			if command.Kind != "shell" {
-				continue
-			}
-			result, err := m.docker.Exec(ctx, container.ID, []string{"sh", "-lc", command.Run})
-			if err != nil {
-				return fmt.Errorf("router %q shell command failed: %w", routerName, err)
-			}
-			if result.ExitCode != 0 {
-				return fmt.Errorf("router %q shell command failed with exit code %d: %s", routerName, result.ExitCode, strings.TrimSpace(result.Stderr))
-			}
-		}
-	}
-	return nil
-}
+			switch command.Kind {
+			case "shell":
+				result, err := m.docker.Exec(ctx, container.ID, []string{"sh", "-lc", command.Run})
+				if err != nil {
+					return fmt.Errorf("router %q shell command failed: %w", routerName, err)
+				}
+				if result.ExitCode != 0 {
+					return fmt.Errorf("router %q shell command failed with exit code %d: %s", routerName, result.ExitCode, strings.TrimSpace(result.Stderr))
+				}
+			case "vtysh":
+				if !prepared[routerName].NeedsSeed {
+					continue
+				}
+				if !waitedForVTYSH {
+					if err := m.waitForVTYSH(ctx, container.ID, frr.EnabledDaemons()); err != nil {
+						return fmt.Errorf("router %q: %w", routerName, err)
+					}
+					waitedForVTYSH = true
+				}
 
-func (m *Manager) seedRouters(ctx context.Context, routers map[string]config.ResolvedRouter, snapshot *state.LabState, prepared map[string]frr.PrepareResult) error {
-	for _, routerName := range sortedResolvedRouterNames(routers) {
-		if !prepared[routerName].NeedsSeed {
-			continue
-		}
-
-		container := snapshot.Containers[routerName]
-		commands := make([]config.Command, 0)
-		for _, command := range routers[routerName].Commands {
-			if command.Kind == "vtysh" {
-				commands = append(commands, command)
+				result, err := m.docker.Exec(ctx, container.ID, []string{"sh", "-lc", renderVTYSH(command.Run)})
+				if err != nil {
+					return fmt.Errorf("router %q vtysh seed failed: %w", routerName, err)
+				}
+				if result.ExitCode != 0 {
+					return fmt.Errorf("router %q vtysh seed failed with exit code %d: %s", routerName, result.ExitCode, strings.TrimSpace(result.Stderr))
+				}
+				if message, failed := vtyshWriteFailure(result); failed {
+					return fmt.Errorf("router %q vtysh seed failed: %s", routerName, message)
+				}
+				ranVTYSH = true
 			}
-		}
-		if len(commands) == 0 {
-			continue
-		}
-
-		if err := m.waitForVTYSH(ctx, container.ID, frr.EnabledDaemons()); err != nil {
-			return fmt.Errorf("router %q: %w", routerName, err)
 		}
 
-		for _, command := range commands {
-			result, err := m.docker.Exec(ctx, container.ID, []string{"sh", "-lc", renderVTYSH(command.Run)})
-			if err != nil {
-				return fmt.Errorf("router %q vtysh seed failed: %w", routerName, err)
+		if ranVTYSH {
+			if err := frr.MarkSeeded(prepared[routerName].MarkerPath); err != nil {
+				return fmt.Errorf("router %q: %w", routerName, err)
 			}
-			if result.ExitCode != 0 {
-				return fmt.Errorf("router %q vtysh seed failed with exit code %d: %s", routerName, result.ExitCode, strings.TrimSpace(result.Stderr))
-			}
-			if message, failed := vtyshWriteFailure(result); failed {
-				return fmt.Errorf("router %q vtysh seed failed: %s", routerName, message)
-			}
-		}
-		if err := frr.MarkSeeded(prepared[routerName].MarkerPath); err != nil {
-			return fmt.Errorf("router %q: %w", routerName, err)
 		}
 	}
 	return nil
