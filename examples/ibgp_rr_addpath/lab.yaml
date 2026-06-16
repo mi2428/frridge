@@ -1,0 +1,137 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: ibgp-rr-addpath
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.73.100/32
+    linux:
+      routes:
+        - to: 10.255.73.11/32
+          via: 192.0.2.0
+          dev: eth1
+        - to: 10.255.73.12/32
+          via: 192.0.2.3
+          dev: eth2
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.73.100
+           bgp cluster-id 10.255.73.100
+           neighbor 10.255.73.11 remote-as 65000
+           neighbor 10.255.73.11 update-source lo
+           neighbor 10.255.73.11 next-hop-self force
+           neighbor 10.255.73.11 route-reflector-client
+           neighbor 10.255.73.12 remote-as 65000
+           neighbor 10.255.73.12 update-source lo
+           neighbor 10.255.73.12 next-hop-self force
+           neighbor 10.255.73.12 route-reflector-client
+           address-family ipv4 unicast
+            network 10.255.73.100/32
+            neighbor 10.255.73.11 activate
+            neighbor 10.255.73.11 addpath-tx-all-paths
+            neighbor 10.255.73.12 activate
+            neighbor 10.255.73.12 addpath-tx-all-paths
+           exit-address-family
+          end
+
+  c1:
+    loopbacks:
+      - 10.255.73.11/32
+    linux:
+      routes:
+        - to: 10.255.73.100/32
+          via: 192.0.2.1
+          dev: eth1
+      bridges:
+        - name: br10
+          addresses: [10.10.73.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:73:11
+              addresses: [10.10.73.11/24]
+              defaultVia: 10.10.73.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname c1
+          router bgp 65000
+           bgp router-id 10.255.73.11
+           neighbor 10.255.73.100 remote-as 65000
+           neighbor 10.255.73.100 update-source lo
+           address-family ipv4 unicast
+            network 10.255.73.11/32
+            network 10.10.73.0/24
+            neighbor 10.255.73.100 activate
+           exit-address-family
+          end
+
+  c2:
+    loopbacks:
+      - 10.255.73.12/32
+    linux:
+      routes:
+        - to: 10.255.73.100/32
+          via: 192.0.2.2
+          dev: eth1
+      bridges:
+        - name: br20
+          addresses: [10.20.73.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:73:12
+              addresses: [10.20.73.12/24]
+              defaultVia: 10.20.73.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname c2
+          router bgp 65000
+           bgp router-id 10.255.73.12
+           neighbor 10.255.73.100 remote-as 65000
+           neighbor 10.255.73.100 update-source lo
+           address-family ipv4 unicast
+            network 10.255.73.12/32
+            network 10.20.73.0/24
+            neighbor 10.255.73.100 activate
+           exit-address-family
+          end
+
+links:
+  - name: rr-c1
+    type: p2p
+    members:
+      - router: rr
+        ifname: eth1
+        ipv4: 192.0.2.1/31
+      - router: c1
+        ifname: eth1
+        ipv4: 192.0.2.0/31
+
+  - name: rr-c2
+    type: p2p
+    members:
+      - router: rr
+        ifname: eth2
+        ipv4: 192.0.2.2/31
+      - router: c2
+        ifname: eth1
+        ipv4: 192.0.2.3/31
+
+pings:
+  - name: c1-host-to-c2-host
+    from:
+      router: c1
+      namespace: host
+      address: 10.10.73.11
+    to: 10.20.73.12
