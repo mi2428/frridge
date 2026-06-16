@@ -9,10 +9,17 @@ routers:
     loopbacks:
       - 10.255.99.1/32
     commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=100000
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
       - kind: vtysh
         run: |
           configure terminal
           hostname r1
+          ip route 10.255.99.3/32 10.255.99.3 color 100
           router isis CORE
            net 49.0001.0000.0000.9901.00
            is-type level-2-only
@@ -21,6 +28,11 @@ routers:
            redistribute ipv4 connected level-2
            mpls-te on
            mpls-te router-address 10.255.99.1
+           mpls-te export
+           segment-routing on
+           segment-routing global-block 16000 23999
+           segment-routing node-msd 8
+           segment-routing prefix 10.255.99.1/32 index 991
           exit
           interface lo
            ip router isis CORE
@@ -32,12 +44,33 @@ routers:
            link-params
            exit-link-params
           exit
+          segment-routing
+           traffic-eng
+            mpls-te on
+            mpls-te import isis
+            segment-list R3-VIA-R2
+             index 10 mpls label 16992
+             index 20 mpls label 16993
+            exit
+            policy color 100 endpoint 10.255.99.3
+             name r3-via-r2
+             binding-sid 4990
+             candidate-path preference 100 name controller-stub explicit segment-list R3-VIA-R2
+            exit
+           exit
           end
 
   r2:
     loopbacks:
       - 10.255.99.2/32
     commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=100000
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
       - kind: vtysh
         run: |
           configure terminal
@@ -51,6 +84,10 @@ routers:
            mpls-te on
            mpls-te router-address 10.255.99.2
            mpls-te export
+           segment-routing on
+           segment-routing global-block 16000 23999
+           segment-routing node-msd 8
+           segment-routing prefix 10.255.99.2/32 index 992
           exit
           interface lo
            ip router isis CORE
@@ -81,6 +118,12 @@ routers:
     loopbacks:
       - 10.255.99.3/32
     commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=100000
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
       - kind: vtysh
         run: |
           configure terminal
@@ -93,6 +136,11 @@ routers:
            redistribute ipv4 connected level-2
            mpls-te on
            mpls-te router-address 10.255.99.3
+           mpls-te export
+           segment-routing on
+           segment-routing global-block 16000 23999
+           segment-routing node-msd 8
+           segment-routing prefix 10.255.99.3/32 index 993
           exit
           interface lo
            ip router isis CORE
@@ -143,7 +191,7 @@ links:
       - { router: collector, ifname: eth1, ipv4: 192.0.2.1/31 }
 
 pings:
-  - name: r2-to-controller-link
+  - name: r1-to-r3-loopback-over-controller-stub-policy
     from:
-      router: r2
-    to: 192.0.2.1
+      router: r1
+    to: 10.255.99.3
