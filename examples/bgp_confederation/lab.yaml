@@ -1,0 +1,121 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: bgp-confederation
+  workdir: .frridge
+
+routers:
+  r1:
+    loopbacks:
+      - 10.255.101.1/32
+    linux:
+      bridges:
+        - name: br10
+          addresses: [10.10.101.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:10:11
+              addresses: [10.10.101.11/24]
+              defaultVia: 10.10.101.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r1
+          router bgp 65001
+           bgp router-id 10.255.101.1
+           bgp confederation identifier 65000
+           bgp confederation peers 65002
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.101.1 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.101.1/32
+            network 10.10.101.0/24
+            neighbor 10.0.101.1 activate
+           exit-address-family
+          end
+
+  r2:
+    loopbacks:
+      - 10.255.101.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r2
+          router bgp 65002
+           bgp router-id 10.255.101.2
+           bgp confederation identifier 65000
+           bgp confederation peers 65001
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.101.0 remote-as 65001
+           neighbor 10.0.101.3 remote-as 65100
+           address-family ipv4 unicast
+            network 10.255.101.2/32
+            neighbor 10.0.101.0 activate
+            neighbor 10.0.101.0 next-hop-self
+            neighbor 10.0.101.3 activate
+           exit-address-family
+          end
+
+  r3:
+    loopbacks:
+      - 10.255.101.3/32
+    linux:
+      bridges:
+        - name: br30
+          addresses: [10.30.101.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:30:11
+              addresses: [10.30.101.11/24]
+              defaultVia: 10.30.101.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r3
+          router bgp 65100
+           bgp router-id 10.255.101.3
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.101.2 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.101.3/32
+            network 10.30.101.0/24
+            neighbor 10.0.101.2 activate
+           exit-address-family
+          end
+
+links:
+  - name: r1-r2
+    type: p2p
+    members:
+      - router: r1
+        ifname: eth1
+        ipv4: 10.0.101.0/31
+      - router: r2
+        ifname: eth1
+        ipv4: 10.0.101.1/31
+
+  - name: r2-r3
+    type: p2p
+    members:
+      - router: r2
+        ifname: eth2
+        ipv4: 10.0.101.2/31
+      - router: r3
+        ifname: eth1
+        ipv4: 10.0.101.3/31
+
+pings:
+  - name: r1-host-to-r3-host
+    from:
+      router: r1
+      namespace: host
+      address: 10.10.101.11
+    to: 10.30.101.11
