@@ -36,5 +36,5 @@ This example builds one route reflector and two iBGP clients.
 ### Reachability
 
 - `c1` and `c2` do not peer with each other directly. They only form iBGP sessions with `rr`.
-- `pings:` in `lab.yaml` checks whether the `c1` host namespace can reach the `c2` host `10.20.73.12` through reflected iBGP routes.
+- `pings:` in `lab.yaml` checks whether the `c1` host namespace can reach the `c2` host `10.20.73.12` through reflected iBGP routes, with the probe source pinned to `10.10.73.11`.
 - Right after `up`, give BGP a few seconds to establish the two client sessions and reflect the client routes before treating the first ping result as final.

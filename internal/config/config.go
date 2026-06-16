@@ -157,6 +157,7 @@ type Ping struct {
 type PingSource struct {
 	Router    string `yaml:"router" json:"router"`
 	Namespace string `yaml:"namespace" json:"namespace,omitempty"`
+	Address   string `yaml:"address" json:"address,omitempty"`
 }
 
 // ResolvedRouter is a Router after lab defaults and relative paths have been
@@ -331,6 +332,9 @@ func (t *Topology) Validate() error {
 
 		if _, ok := t.Routers[ping.From.Router]; !ok {
 			return fmt.Errorf("ping %q references undefined source router %q", ping.Name, ping.From.Router)
+		}
+		if strings.TrimSpace(ping.From.Address) != "" && net.ParseIP(strings.TrimSpace(ping.From.Address)) == nil {
+			return fmt.Errorf("ping %q has invalid source address %q", ping.Name, ping.From.Address)
 		}
 		if strings.TrimSpace(ping.To) == "" {
 			return fmt.Errorf("ping %q target must not be empty", ping.Name)

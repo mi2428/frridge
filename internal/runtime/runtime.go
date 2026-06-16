@@ -777,7 +777,11 @@ func pingCommand(check config.Ping) []string {
 		count = 3
 	}
 
-	command := []string{"ping", "-c", strconv.Itoa(count), "-W", "1", check.To}
+	command := []string{"ping", "-c", strconv.Itoa(count), "-W", "1"}
+	if source := strings.TrimSpace(check.From.Address); source != "" {
+		command = append(command, "-I", source)
+	}
+	command = append(command, check.To)
 	if strings.TrimSpace(check.From.Namespace) == "" {
 		return command
 	}

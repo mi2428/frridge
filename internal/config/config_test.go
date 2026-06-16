@@ -230,6 +230,7 @@ func TestValidateAcceptsNamedPingChecks(t *testing.T) {
 				From: PingSource{
 					Router:    "r1",
 					Namespace: "host",
+					Address:   "10.10.10.11",
 				},
 				To:    "192.0.2.2",
 				Count: 3,
@@ -368,6 +369,44 @@ func TestValidateRejectsPingWithoutSourceRouter(t *testing.T) {
 	err := topology.Validate()
 	if err == nil || !strings.Contains(err.Error(), `undefined source router "missing"`) {
 		t.Fatalf("Validate() error = %v, want undefined source router error", err)
+	}
+}
+
+func TestValidateRejectsPingWithInvalidSourceAddress(t *testing.T) {
+	t.Parallel()
+
+	topology := &Topology{
+		APIVersion: APIVersion,
+		Lab:        Lab{Name: "ping-lab", Defaults: Defaults{Image: "frr"}},
+		Routers: map[string]Router{
+			"r1": {},
+			"r2": {},
+		},
+		Links: []Link{
+			{
+				Name: "fabric",
+				Type: "p2p",
+				Members: []LinkMember{
+					{Router: "r1", IfName: "eth1"},
+					{Router: "r2", IfName: "eth1"},
+				},
+			},
+		},
+		Pings: []Ping{
+			{
+				Name: "bad",
+				From: PingSource{
+					Router:  "r1",
+					Address: "not-an-ip",
+				},
+				To: "192.0.2.2",
+			},
+		},
+	}
+
+	err := topology.Validate()
+	if err == nil || !strings.Contains(err.Error(), `invalid source address`) {
+		t.Fatalf("Validate() error = %v, want invalid source address error", err)
 	}
 }
 

@@ -115,6 +115,15 @@ func TestPingCommandSupportsOptionalNamespace(t *testing.T) {
 		t.Fatalf("pingCommand() with namespace = %#v, want %#v", withNamespace, []string{"ip", "netns", "exec", "host", "ping", "-c", "3", "-W", "1", "10.0.0.1"})
 	}
 
+	withSource := pingCommand(config.Ping{
+		From:  config.PingSource{Address: "10.255.0.1"},
+		Count: 5,
+		To:    "192.0.2.1",
+	})
+	if got, want := strings.Join(withSource, "\x00"), strings.Join([]string{"ping", "-c", "5", "-W", "1", "-I", "10.255.0.1", "192.0.2.1"}, "\x00"); got != want {
+		t.Fatalf("pingCommand() with source = %#v, want %#v", withSource, []string{"ping", "-c", "5", "-W", "1", "-I", "10.255.0.1", "192.0.2.1"})
+	}
+
 	withoutNamespace := pingCommand(config.Ping{
 		Count: 5,
 		To:    "192.0.2.1",

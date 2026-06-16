@@ -244,6 +244,7 @@ pings:
     from:
       router: rt1                # required; ping runs inside this router container
       namespace: host            # optional; runs via `ip netns exec <namespace>` when set
+      address: 10.255.0.1        # optional; passed to ping(8) as `-I <address>`
     to: 10.255.0.2               # required; target passed to ping(8) as-is
     count: 5                     # optional; defaults to 3 when omitted
 ```
