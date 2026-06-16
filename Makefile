@@ -14,7 +14,7 @@ BINDIR  := bin
 DISTDIR := dist
 
 # Toolchain
-GO         ?= go
+GO          ?= go
 STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@latest
 REVIVE      ?= $(GO) run github.com/mgechev/revive@latest -formatter friendly
 MODERNIZE   ?= $(GO) run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -test
@@ -28,6 +28,7 @@ GOFILES     := $(shell git ls-files --cached --others --exclude-standard -- '*.g
 INSTALL ?= install
 GH      ?= gh
 SHASUM  ?= shasum
+DOCKER  ?= docker
 
 # Install
 INSTALL_PREFIX ?= $(HOME)/.local
@@ -109,6 +110,22 @@ check: ## Run formatting, lint, and unit tests
 .PHONY: clean
 clean: ## Remove local build artifacts
 	@rm -rf "$(BINDIR)" "$(DISTDIR)"
+
+.PHONY: image.source
+image.source: ## Build the source-built FRR image used by examples that need current FRR
+	@docker_cmd() { \
+		if "$(DOCKER)" info >/dev/null 2>&1; then \
+			"$(DOCKER)" "$$@"; \
+		else \
+			sudo "$(DOCKER)" "$$@"; \
+		fi; \
+	}; \
+	docker_cmd build \
+		-f docker/frr/source.Dockerfile \
+		--build-arg FRR_GIT_REF="$(if $(FRR_GIT_REF),$(FRR_GIT_REF),master)" \
+		--build-arg LIBYANG_GIT_REF="$(if $(LIBYANG_GIT_REF),$(LIBYANG_GIT_REF),v2.1.148)" \
+		-t frridge-frr:source \
+		.
 
 ##@ Multipass
 
