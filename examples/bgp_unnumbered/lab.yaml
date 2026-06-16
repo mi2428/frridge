@@ -1,0 +1,55 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: bgp-unnumbered
+  workdir: .frridge
+
+routers:
+  r1:
+    loopbacks:
+      - 10.255.72.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r1
+          router bgp 65101
+           bgp router-id 10.255.72.1
+           no bgp default ipv4-unicast
+           neighbor eth1 interface remote-as external
+           address-family ipv4 unicast
+            network 10.255.72.1/32
+            neighbor eth1 activate
+           exit-address-family
+          end
+
+  r2:
+    loopbacks:
+      - 10.255.72.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r2
+          router bgp 65102
+           bgp router-id 10.255.72.2
+           no bgp default ipv4-unicast
+           neighbor eth1 interface remote-as external
+           address-family ipv4 unicast
+            network 10.255.72.2/32
+            neighbor eth1 activate
+           exit-address-family
+          end
+
+links:
+  - name: r1-r2
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1 }
+      - { router: r2, ifname: eth1 }
+
+pings:
+  - name: r1-to-r2-loopback
+    from:
+      router: r1
+    to: 10.255.72.2
