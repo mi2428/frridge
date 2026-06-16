@@ -143,7 +143,7 @@ links:
       - { router: collector, ifname: eth1, ipv4: 192.0.2.1/31 }
 
 pings:
-  - name: r1-to-r3-loopback
+  - name: r2-to-controller-link
     from:
-      router: r1
-    to: 10.255.99.3
+      router: r2
+    to: 192.0.2.1
