@@ -2,8 +2,7 @@
 
 This example uses `pathd` to steer a loopback route across a four-router
 diamond with an explicit segment list. It is useful for observing a programmed
-SR policy and then manually changing links or metrics; it is not an IS-IS
-TI-LFA example.
+SR policy and then manually changing links or metrics.
 
 ## Topology
 

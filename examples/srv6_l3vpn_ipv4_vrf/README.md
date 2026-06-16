@@ -1,8 +1,7 @@
 # SRv6 L3VPN IPv4 VRF
 
 This example carries two IPv4 VRFs across an IPv6 underlay with BGP VPNv4 and
-SRv6 service SIDs. It is an IPv4-VRF service example; it does not demonstrate
-an IPv6 VRF or End.DT6 service.
+SRv6 service SIDs.
 
 ## Topology
 
