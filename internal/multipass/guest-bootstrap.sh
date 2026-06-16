@@ -29,7 +29,8 @@ if ((${#packages[@]})); then
 fi
 
 systemctl enable --now docker
-install -d -m 0755 /etc/modules-load.d /home/ubuntu/.local/share/frridge-mp
+install -d -m 0755 /etc/modules-load.d
+install -d -o ubuntu -g ubuntu -m 0755 /home/ubuntu/.local/share/frridge-mp
 printf '%s\n' vrf mpls_router mpls_iptunnel >/etc/modules-load.d/frridge-mp.conf
 while read -r module; do
 	[ -n "$module" ] || continue

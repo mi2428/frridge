@@ -41,6 +41,7 @@ type ContainerSpec struct {
 	Name       string
 	Image      string
 	Hostname   string
+	Command    []string
 	Env        map[string]string
 	Labels     map[string]string
 	Sysctls    map[string]string
@@ -91,6 +92,7 @@ func (c *sdkClient) CreateContainer(ctx context.Context, spec ContainerSpec) (st
 		&containerapi.Config{
 			Image:    spec.Image,
 			Hostname: spec.Hostname,
+			Cmd:      append([]string(nil), spec.Command...),
 			Env:      envPairs(spec.Env),
 			Labels:   copyStringMap(spec.Labels),
 		},

@@ -160,6 +160,7 @@ routers:
   rt1:
     hostname: spine1             # optional; defaults to the router key (rt1 here)
     image: frrouting/frr:v10.6.1 # optional router-local override for lab.defaults.image or the built-in image
+    command: ["/bin/sh", "-lc", "sleep infinity"] # optional; overrides the image CMD, useful for tool containers
     privileged: true             # optional router-local override for lab.defaults.privileged or the built-in true
     env:                         # optional container environment variables
       ROLE: spine

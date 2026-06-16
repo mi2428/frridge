@@ -158,6 +158,7 @@ func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (
 			Name:       containerName(topology.Lab.Name, routerName),
 			Image:      router.Image,
 			Hostname:   router.Hostname,
+			Command:    router.Command,
 			Env:        router.Env,
 			Labels:     routerLabels(topology.Lab.Name, routerName, digest),
 			Sysctls:    router.Sysctls,

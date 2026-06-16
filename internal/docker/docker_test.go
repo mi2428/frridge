@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	containerapi "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -35,6 +36,25 @@ func TestToAPIMountsPreservesReadOnly(t *testing.T) {
 	}
 	if !mounts[0].ReadOnly {
 		t.Fatalf("toAPIMounts()[0].ReadOnly = false, want true")
+	}
+}
+
+func TestContainerSpecCommandCopiedIntoConfig(t *testing.T) {
+	t.Parallel()
+
+	spec := ContainerSpec{
+		Image:   "example",
+		Command: []string{"/bin/sh", "-lc", "sleep infinity"},
+	}
+	cfg := containerapi.Config{
+		Image: spec.Image,
+		Cmd:   append([]string(nil), spec.Command...),
+	}
+	if got, want := len(cfg.Cmd), 3; got != want {
+		t.Fatalf("len(cfg.Cmd) = %d, want %d", got, want)
+	}
+	if got, want := cfg.Cmd[2], "sleep infinity"; got != want {
+		t.Fatalf("cfg.Cmd[2] = %q, want %q", got, want)
 	}
 }
 

@@ -65,6 +65,7 @@ type Defaults struct {
 type Router struct {
 	Hostname   string            `yaml:"hostname" json:"hostname"`
 	Image      string            `yaml:"image" json:"image"`
+	Command    []string          `yaml:"command" json:"command,omitempty"`
 	Privileged *bool             `yaml:"privileged" json:"privileged,omitempty"`
 	Env        map[string]string `yaml:"env" json:"env,omitempty"`
 	Loopbacks  []string          `yaml:"loopbacks" json:"loopbacks,omitempty"`
@@ -166,6 +167,7 @@ type ResolvedRouter struct {
 	Name       string
 	Hostname   string
 	Image      string
+	Command    []string
 	Privileged bool
 	Env        map[string]string
 	Loopbacks  []string
@@ -255,6 +257,11 @@ func (t *Topology) Validate() error {
 		for key := range mergedSysctls(t.Lab.Defaults.Sysctls, router.Sysctls) {
 			if !sysctlKeyPattern.MatchString(key) {
 				return fmt.Errorf("router %q has invalid sysctl key %q", name, key)
+			}
+		}
+		for _, token := range router.Command {
+			if strings.TrimSpace(token) == "" {
+				return fmt.Errorf("router %q has an empty command token", name)
 			}
 		}
 		if err := validateLinux(name, router.Linux); err != nil {
@@ -385,6 +392,7 @@ func (t *Topology) ResolveRouter(name string) ResolvedRouter {
 		Name:       name,
 		Hostname:   hostname,
 		Image:      image,
+		Command:    append([]string(nil), router.Command...),
 		Privileged: privileged,
 		Env:        copyStringMap(router.Env),
 		Loopbacks:  append([]string(nil), router.Loopbacks...),

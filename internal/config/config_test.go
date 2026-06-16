@@ -24,6 +24,7 @@ lab:
       net.ipv4.ip_forward: "1"
 routers:
   r1:
+    command: ["/bin/sh", "-lc", "sleep infinity"]
     mounts:
       - source: ./artifacts
         target: /lab
@@ -55,6 +56,9 @@ links:
 	}
 	if got, want := router.Mounts[0].Source, filepath.Join(tmpDir, "artifacts"); got != want {
 		t.Fatalf("ResolveRouter().Mounts[0].Source = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(router.Command, " "), "/bin/sh -lc sleep infinity"; got != want {
+		t.Fatalf("ResolveRouter().Command = %q, want %q", got, want)
 	}
 	if got := router.Sysctls["net.ipv4.ip_forward"]; got != "1" {
 		t.Fatalf("default sysctl missing, got %q", got)
@@ -240,6 +244,34 @@ func TestValidateAcceptsNamedPingChecks(t *testing.T) {
 
 	if err := topology.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsEmptyCommandToken(t *testing.T) {
+	t.Parallel()
+
+	topology := &Topology{
+		APIVersion: APIVersion,
+		Lab:        Lab{Name: "bad-command"},
+		Routers: map[string]Router{
+			"r1": {Command: []string{"sleep", ""}},
+			"r2": {},
+		},
+		Links: []Link{
+			{
+				Name: "fabric",
+				Type: "p2p",
+				Members: []LinkMember{
+					{Router: "r1", IfName: "eth1"},
+					{Router: "r2", IfName: "eth1"},
+				},
+			},
+		},
+	}
+
+	err := topology.Validate()
+	if err == nil || !strings.Contains(err.Error(), `router "r1" has an empty command token`) {
+		t.Fatalf("Validate() error = %v, want empty command token error", err)
 	}
 }
 
