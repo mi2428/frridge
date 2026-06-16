@@ -38,10 +38,10 @@ routers:
           interface eth4
            ip address 192.168.1.254/24
           exit
-         segment-routing
-          srv6
-           locators
-            locator default
+          segment-routing
+           srv6
+            locators
+             locator default
               prefix fc00:0:1::/48 block-len 32 node-len 16 func-bits 16
               behavior usid
               format usid-f3216
@@ -113,10 +113,10 @@ routers:
           interface eth3
            ip address 192.168.2.254/24
           exit
-         segment-routing
-          srv6
-           locators
-            locator default
+          segment-routing
+           srv6
+            locators
+             locator default
               prefix fc00:0:2::/48 block-len 32 node-len 16 func-bits 16
               behavior usid
               format usid-f3216
@@ -185,10 +185,10 @@ routers:
           interface eth3
            ip address 192.168.3.254/24
           exit
-         segment-routing
-          srv6
-           locators
-            locator default
+          segment-routing
+           srv6
+            locators
+             locator default
               prefix fc00:0:3::/48 block-len 32 node-len 16 func-bits 16
               behavior usid
               format usid-f3216
