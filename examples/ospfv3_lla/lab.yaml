@@ -1,0 +1,109 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: ospfv3-lla-line
+  workdir: .frridge
+  defaults:
+    sysctls:
+      net.ipv6.conf.all.forwarding: "1"
+
+routers:
+  r1:
+    loopbacks:
+      - 2001:db8:110::1/128
+    commands:
+      - kind: shell
+        run: |
+          ip -6 addr flush dev eth1 scope global
+          ip -6 addr replace fe80::12:1/64 dev eth1 scope link
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r1
+          router ospf6
+           ospf6 router-id 10.255.71.1
+          exit
+          interface eth1
+           ipv6 ospf6 network point-to-point
+           ipv6 ospf6 area 0.0.0.0
+          exit
+          interface lo
+           ipv6 ospf6 area 0.0.0.0
+           ipv6 ospf6 passive
+          exit
+          end
+
+  r2:
+    loopbacks:
+      - 2001:db8:110::2/128
+    commands:
+      - kind: shell
+        run: |
+          ip -6 addr flush dev eth1 scope global
+          ip -6 addr flush dev eth2 scope global
+          ip -6 addr replace fe80::12:2/64 dev eth1 scope link
+          ip -6 addr replace fe80::23:1/64 dev eth2 scope link
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r2
+          router ospf6
+           ospf6 router-id 10.255.71.2
+          exit
+          interface eth1
+           ipv6 ospf6 network point-to-point
+           ipv6 ospf6 area 0.0.0.0
+          exit
+          interface eth2
+           ipv6 ospf6 network point-to-point
+           ipv6 ospf6 area 0.0.0.0
+          exit
+          interface lo
+           ipv6 ospf6 area 0.0.0.0
+           ipv6 ospf6 passive
+          exit
+          end
+
+  r3:
+    loopbacks:
+      - 2001:db8:110::3/128
+    commands:
+      - kind: shell
+        run: |
+          ip -6 addr flush dev eth1 scope global
+          ip -6 addr replace fe80::23:2/64 dev eth1 scope link
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r3
+          router ospf6
+           ospf6 router-id 10.255.71.3
+          exit
+          interface eth1
+           ipv6 ospf6 network point-to-point
+           ipv6 ospf6 area 0.0.0.0
+          exit
+          interface lo
+           ipv6 ospf6 area 0.0.0.0
+           ipv6 ospf6 passive
+          exit
+          end
+
+links:
+  - name: r1-r2
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1 }
+      - { router: r2, ifname: eth1 }
+
+  - name: r2-r3
+    type: p2p
+    members:
+      - { router: r2, ifname: eth2 }
+      - { router: r3, ifname: eth1 }
+
+pings:
+  - name: r1-to-r3-loopback
+    from:
+      router: r1
+    to: 2001:db8:110::3
