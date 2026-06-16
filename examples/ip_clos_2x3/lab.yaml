@@ -1,0 +1,229 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: ip-clos-2x3
+  workdir: .frridge
+
+routers:
+  sp1:
+    loopbacks:
+      - 10.255.0.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp1
+          router bgp 65101
+           bgp router-id 10.255.0.1
+           no bgp ebgp-requires-policy
+           neighbor 10.0.0.0 remote-as 65111
+           neighbor 10.0.0.4 remote-as 65112
+           neighbor 10.0.0.8 remote-as 65113
+           address-family ipv4 unicast
+            network 10.255.0.1/32
+            neighbor 10.0.0.0 activate
+            neighbor 10.0.0.4 activate
+            neighbor 10.0.0.8 activate
+           exit-address-family
+          end
+
+  sp2:
+    loopbacks:
+      - 10.255.0.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp2
+          router bgp 65102
+           bgp router-id 10.255.0.2
+           no bgp ebgp-requires-policy
+           neighbor 10.0.0.2 remote-as 65111
+           neighbor 10.0.0.6 remote-as 65112
+           neighbor 10.0.0.10 remote-as 65113
+           address-family ipv4 unicast
+            network 10.255.0.2/32
+            neighbor 10.0.0.2 activate
+            neighbor 10.0.0.6 activate
+            neighbor 10.0.0.10 activate
+           exit-address-family
+          end
+
+  lf1:
+    loopbacks:
+      - 10.255.0.11/32
+    linux:
+      bridges:
+        - name: br10
+          addresses: [10.10.11.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              addresses: [10.10.11.11/24]
+              defaultVia: 10.10.11.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf1
+          router bgp 65111
+           bgp router-id 10.255.0.11
+           no bgp ebgp-requires-policy
+           bgp bestpath as-path multipath-relax
+           neighbor 10.0.0.1 remote-as 65101
+           neighbor 10.0.0.3 remote-as 65102
+           address-family ipv4 unicast
+            network 10.255.0.11/32
+            network 10.10.11.0/24
+            maximum-paths 2
+            neighbor 10.0.0.1 activate
+            neighbor 10.0.0.3 activate
+           exit-address-family
+          end
+
+  lf2:
+    loopbacks:
+      - 10.255.0.12/32
+    linux:
+      bridges:
+        - name: br20
+          addresses: [10.10.12.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              addresses: [10.10.12.12/24]
+              defaultVia: 10.10.12.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf2
+          router bgp 65112
+           bgp router-id 10.255.0.12
+           no bgp ebgp-requires-policy
+           bgp bestpath as-path multipath-relax
+           neighbor 10.0.0.5 remote-as 65101
+           neighbor 10.0.0.7 remote-as 65102
+           address-family ipv4 unicast
+            network 10.255.0.12/32
+            network 10.10.12.0/24
+            maximum-paths 2
+            neighbor 10.0.0.5 activate
+            neighbor 10.0.0.7 activate
+           exit-address-family
+          end
+
+  lf3:
+    loopbacks:
+      - 10.255.0.13/32
+    linux:
+      bridges:
+        - name: br30
+          addresses: [10.10.13.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              addresses: [10.10.13.13/24]
+              defaultVia: 10.10.13.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf3
+          router bgp 65113
+           bgp router-id 10.255.0.13
+           no bgp ebgp-requires-policy
+           bgp bestpath as-path multipath-relax
+           neighbor 10.0.0.9 remote-as 65101
+           neighbor 10.0.0.11 remote-as 65102
+           address-family ipv4 unicast
+            network 10.255.0.13/32
+            network 10.10.13.0/24
+            maximum-paths 2
+            neighbor 10.0.0.9 activate
+            neighbor 10.0.0.11 activate
+           exit-address-family
+          end
+
+links:
+  - name: lf1-sp1
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth1
+        ipv4: 10.0.0.0/31
+      - router: sp1
+        ifname: eth1
+        ipv4: 10.0.0.1/31
+
+  - name: lf1-sp2
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth2
+        ipv4: 10.0.0.2/31
+      - router: sp2
+        ifname: eth1
+        ipv4: 10.0.0.3/31
+
+  - name: lf2-sp1
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth1
+        ipv4: 10.0.0.4/31
+      - router: sp1
+        ifname: eth2
+        ipv4: 10.0.0.5/31
+
+  - name: lf2-sp2
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth2
+        ipv4: 10.0.0.6/31
+      - router: sp2
+        ifname: eth2
+        ipv4: 10.0.0.7/31
+
+  - name: lf3-sp1
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth1
+        ipv4: 10.0.0.8/31
+      - router: sp1
+        ifname: eth3
+        ipv4: 10.0.0.9/31
+
+  - name: lf3-sp2
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth2
+        ipv4: 10.0.0.10/31
+      - router: sp2
+        ifname: eth3
+        ipv4: 10.0.0.11/31
+
+pings:
+  - name: lf1-host-to-lf2-host
+    from:
+      router: lf1
+      namespace: host
+      address: 10.10.11.11
+    to: 10.10.12.12
+
+  - name: lf1-host-to-lf3-host
+    from:
+      router: lf1
+      namespace: host
+      address: 10.10.11.11
+    to: 10.10.13.13
+
+  - name: lf2-host-to-lf3-host
+    from:
+      router: lf2
+      namespace: host
+      address: 10.10.12.12
+    to: 10.10.13.13
