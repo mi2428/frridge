@@ -1,35 +1,47 @@
-# eBGP Inter-AS Option C (2 Routers)
+# eBGP Inter-AS Option C (4 Routers)
 
-This example collapses each domain into one border router and models option C as loopback-to-loopback eBGP over a separate transport link.
-`lab.yaml` uses `eth1` only for transport, `linux.routes` provides the loopback reachability, and the actual eBGP session is pinned to the loopbacks.
+This example splits the topology into `PE -> ASBR -> ASBR -> PE`.
+`lab.yaml` keeps the two ASBRs out of the service BGP session and forms the actual inter-AS eBGP adjacency directly between `pe1` and `pe2`. Because this lab is IP-only, the ASBRs also carry static routes for the PE loopbacks and service subnets.
 
 ## Topology
 
-### AS 65001 Border Router
+### AS 65001
 
-- `as1`
-  - Loopback / eBGP peer: `10.255.2.1/32`
+- `pe1`
+  - Loopback / service BGP endpoint: `10.255.2.11/32`
   - Transport link:
-    - `eth1` to `as2 eth1`: `192.0.2.0/31`
+    - `eth1` to `asbr1 eth1`: `192.0.2.0/31`
   - Local LAN:
     - `br10`: `10.10.30.1/24`
     - `host` netns: `10.10.30.11/24`, MAC `02:00:00:00:c0:11`
+- `asbr1`
+  - Loopback: `10.255.2.1/32`
+  - Transport links:
+    - `eth1` to `pe1 eth1`: `192.0.2.1/31`
+    - `eth2` to `asbr2 eth1`: `192.0.2.2/31`
 
-### AS 65002 Border Router
+### AS 65002
 
-- `as2`
-  - Loopback / eBGP peer: `10.255.2.2/32`
+- `asbr2`
+  - Loopback: `10.255.2.2/32`
+  - Transport links:
+    - `eth1` to `asbr1 eth2`: `192.0.2.3/31`
+    - `eth2` to `pe2 eth1`: `192.0.2.5/31`
+- `pe2`
+  - Loopback / service BGP endpoint: `10.255.2.12/32`
   - Transport link:
-    - `eth1` to `as1 eth1`: `192.0.2.1/31`
+    - `eth1` to `asbr2 eth2`: `192.0.2.4/31`
   - Local LAN:
     - `br20`: `10.20.30.1/24`
     - `host` netns: `10.20.30.12/24`, MAC `02:00:00:00:c0:12`
 
 ### Inter-AS Behavior
 
-- The border link only provides transport reachability between the loopbacks.
-- Static host routes keep the loopback-based eBGP session simple in this two-router lab.
-- The service routes are exchanged on the multihop loopback session rather than on the border interface addresses.
+- `pe1` and `pe2` form the service eBGP session directly between their loopbacks.
+- `asbr1` and `asbr2` do not participate in the service BGP control plane.
+- To keep this learning lab IP-only and pingable, the ASBRs carry static routes for both PE loopbacks and both service subnets.
+- The service routes are exchanged on the end-to-end multihop PE session instead of on any ASBR-facing BGP session.
+- This is the role-split learning version of option C. It intentionally focuses on PE-to-PE service peering rather than on a full MPLS VPN control plane.
 
 ### Reachability
 
