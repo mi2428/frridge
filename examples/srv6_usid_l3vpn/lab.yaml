@@ -85,6 +85,11 @@ routers:
            exit-address-family
           end
           write memory
+      - kind: shell
+        run: |
+          set -e
+          ip -6 route replace 2001:db8:2:2::/64 via 2001:db8:12::2 dev eth1
+          ip -6 route replace 2001:db8:3:3::/64 via 2001:db8:13::3 dev eth2
 
   r2:
     commands:
@@ -157,6 +162,11 @@ routers:
            exit-address-family
           end
           write memory
+      - kind: shell
+        run: |
+          set -e
+          ip -6 route replace 2001:db8:1:1::/64 via 2001:db8:12::1 dev eth1
+          ip -6 route replace 2001:db8:3:3::/64 via 2001:db8:12::1 dev eth1
 
   r3:
     commands:
@@ -230,6 +240,12 @@ routers:
            exit-address-family
           end
           write memory
+      - kind: shell
+        run: |
+          set -e
+          ip -6 route replace 2001:db8:12::/64 via 2001:db8:13::1 dev eth1
+          ip -6 route replace 2001:db8:1:1::/64 via 2001:db8:13::1 dev eth1
+          ip -6 route replace 2001:db8:2:2::/64 via 2001:db8:13::1 dev eth1
 
   c11:
     commands:
