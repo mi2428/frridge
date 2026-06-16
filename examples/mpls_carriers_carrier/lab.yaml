@@ -1,0 +1,149 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: mpls-carriers-carrier
+  workdir: .frridge
+
+routers:
+  pe1:
+    loopbacks:
+      - 10.255.2.11/32
+    linux:
+      routes:
+        - to: 10.255.2.12/32
+          via: 192.0.2.1
+          dev: eth1
+      bridges:
+        - name: br10
+          addresses: [10.10.30.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:c0:11
+              addresses: [10.10.30.11/24]
+              defaultVia: 10.10.30.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe1
+          router bgp 65001
+           bgp router-id 10.255.2.11
+           neighbor 10.255.2.12 remote-as 65002
+           neighbor 10.255.2.12 update-source lo
+           neighbor 10.255.2.12 ebgp-multihop 5
+           address-family ipv4 unicast
+            network 10.255.2.11/32
+            network 10.10.30.0/24
+            neighbor 10.255.2.12 activate
+           exit-address-family
+          end
+
+  asbr1:
+    loopbacks:
+      - 10.255.2.1/32
+    linux:
+      routes:
+        - to: 10.10.30.0/24
+          via: 192.0.2.0
+          dev: eth1
+        - to: 10.20.30.0/24
+          via: 192.0.2.3
+          dev: eth2
+        - to: 10.255.2.11/32
+          via: 192.0.2.0
+          dev: eth1
+        - to: 10.255.2.12/32
+          via: 192.0.2.3
+          dev: eth2
+
+  asbr2:
+    loopbacks:
+      - 10.255.2.2/32
+    linux:
+      routes:
+        - to: 10.10.30.0/24
+          via: 192.0.2.2
+          dev: eth1
+        - to: 10.20.30.0/24
+          via: 192.0.2.4
+          dev: eth2
+        - to: 10.255.2.11/32
+          via: 192.0.2.2
+          dev: eth1
+        - to: 10.255.2.12/32
+          via: 192.0.2.4
+          dev: eth2
+
+  pe2:
+    loopbacks:
+      - 10.255.2.12/32
+    linux:
+      routes:
+        - to: 10.255.2.11/32
+          via: 192.0.2.5
+          dev: eth1
+      bridges:
+        - name: br20
+          addresses: [10.20.30.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:c0:12
+              addresses: [10.20.30.12/24]
+              defaultVia: 10.20.30.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe2
+          router bgp 65002
+           bgp router-id 10.255.2.12
+           neighbor 10.255.2.11 remote-as 65001
+           neighbor 10.255.2.11 update-source lo
+           neighbor 10.255.2.11 ebgp-multihop 5
+           address-family ipv4 unicast
+            network 10.255.2.12/32
+            network 10.20.30.0/24
+            neighbor 10.255.2.11 activate
+           exit-address-family
+          end
+
+links:
+  - name: pe1-asbr1
+    type: p2p
+    members:
+      - router: pe1
+        ifname: eth1
+        ipv4: 192.0.2.0/31
+      - router: asbr1
+        ifname: eth1
+        ipv4: 192.0.2.1/31
+
+  - name: asbr1-asbr2
+    type: p2p
+    members:
+      - router: asbr1
+        ifname: eth2
+        ipv4: 192.0.2.2/31
+      - router: asbr2
+        ifname: eth1
+        ipv4: 192.0.2.3/31
+
+  - name: asbr2-pe2
+    type: p2p
+    members:
+      - router: pe2
+        ifname: eth1
+        ipv4: 192.0.2.4/31
+      - router: asbr2
+        ifname: eth2
+        ipv4: 192.0.2.5/31
+
+pings:
+  - name: pe1-host-to-pe2-host
+    from:
+      router: pe1
+      namespace: host
+      address: 10.10.30.11
+    to: 10.20.30.12
