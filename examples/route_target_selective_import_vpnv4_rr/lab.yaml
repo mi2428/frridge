@@ -1,0 +1,315 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: route-target-selective-import-vpnv4-rr
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.92.100/32
+    linux:
+      routes:
+        - to: 10.255.92.11/32
+          via: 192.168.92.11
+          dev: eth1
+        - to: 10.255.92.12/32
+          via: 192.168.92.12
+          dev: eth1
+        - to: 10.255.92.13/32
+          via: 192.168.92.13
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.92.100
+           bgp cluster-id 10.255.92.100
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.255.92.11 remote-as 65000
+           neighbor 10.255.92.11 update-source lo
+           neighbor 10.255.92.12 remote-as 65000
+           neighbor 10.255.92.12 update-source lo
+           neighbor 10.255.92.13 remote-as 65000
+           neighbor 10.255.92.13 update-source lo
+           neighbor 192.168.92.11 remote-as 65000
+           neighbor 192.168.92.12 remote-as 65000
+           neighbor 192.168.92.13 remote-as 65000
+           address-family ipv4 unicast
+            no neighbor 10.255.92.11 activate
+            no neighbor 10.255.92.12 activate
+            no neighbor 10.255.92.13 activate
+            no neighbor 192.168.92.11 activate
+            no neighbor 192.168.92.12 activate
+            no neighbor 192.168.92.13 activate
+            network 10.255.92.100/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.92.11 activate
+            neighbor 192.168.92.11 route-reflector-client
+            neighbor 192.168.92.12 activate
+            neighbor 192.168.92.12 route-reflector-client
+            neighbor 192.168.92.13 activate
+            neighbor 192.168.92.13 route-reflector-client
+            network 10.255.92.100/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.92.11 activate
+            neighbor 10.255.92.11 route-reflector-client
+            neighbor 10.255.92.12 activate
+            neighbor 10.255.92.12 route-reflector-client
+            neighbor 10.255.92.13 activate
+            neighbor 10.255.92.13 route-reflector-client
+           exit-address-family
+          end
+
+  red:
+    loopbacks:
+      - 10.255.92.11/32
+    linux:
+      vrfs:
+        - name: red
+          table: 1100
+      veths:
+        - name: lan0
+          peer: host0
+          master: red
+          addresses: [10.10.92.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.10.92.11/24]
+            defaultVia: 10.10.92.1
+      routes:
+        - to: 10.255.92.100/32
+          via: 192.168.92.100
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname red
+          interface eth1
+           mpls bgp forwarding
+          exit
+          router bgp 65000
+           bgp router-id 10.255.92.11
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.255.92.100 remote-as 65000
+           neighbor 10.255.92.100 update-source lo
+           neighbor 192.168.92.100 remote-as 65000
+           address-family ipv4 unicast
+            no neighbor 10.255.92.100 activate
+            no neighbor 192.168.92.100 activate
+            network 10.255.92.11/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.92.100 activate
+            network 10.255.92.11/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.92.100 activate
+           exit-address-family
+          exit
+          router bgp 65000 vrf red
+           bgp router-id 10.255.92.11
+           address-family ipv4 unicast
+            redistribute connected
+            label vpn export 921
+            rd vpn export 65000:921
+            rt vpn export 65000:100
+            rt vpn import 65000:100 65000:300
+            import vpn
+            export vpn
+           exit-address-family
+          end
+
+  blue:
+    loopbacks:
+      - 10.255.92.12/32
+    linux:
+      vrfs:
+        - name: blue
+          table: 1200
+      veths:
+        - name: lan0
+          peer: host0
+          master: blue
+          addresses: [10.20.92.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.20.92.12/24]
+            defaultVia: 10.20.92.1
+      routes:
+        - to: 10.255.92.100/32
+          via: 192.168.92.100
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname blue
+          interface eth1
+           mpls bgp forwarding
+          exit
+          router bgp 65000
+           bgp router-id 10.255.92.12
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.255.92.100 remote-as 65000
+           neighbor 10.255.92.100 update-source lo
+           neighbor 192.168.92.100 remote-as 65000
+           address-family ipv4 unicast
+            no neighbor 10.255.92.100 activate
+            no neighbor 192.168.92.100 activate
+            network 10.255.92.12/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.92.100 activate
+            network 10.255.92.12/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.92.100 activate
+           exit-address-family
+          exit
+          router bgp 65000 vrf blue
+           bgp router-id 10.255.92.12
+           address-family ipv4 unicast
+            redistribute connected
+            label vpn export 922
+            rd vpn export 65000:922
+            rt vpn export 65000:200
+            rt vpn import 65000:200 65000:300
+            import vpn
+            export vpn
+           exit-address-family
+          end
+
+  shared:
+    loopbacks:
+      - 10.255.92.13/32
+    linux:
+      vrfs:
+        - name: shared
+          table: 1300
+      veths:
+        - name: lan0
+          peer: host0
+          master: shared
+          addresses: [10.30.92.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.30.92.13/24]
+            defaultVia: 10.30.92.1
+      routes:
+        - to: 10.255.92.100/32
+          via: 192.168.92.100
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname shared
+          interface eth1
+           mpls bgp forwarding
+          exit
+          router bgp 65000
+           bgp router-id 10.255.92.13
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.255.92.100 remote-as 65000
+           neighbor 10.255.92.100 update-source lo
+           neighbor 192.168.92.100 remote-as 65000
+           address-family ipv4 unicast
+            no neighbor 10.255.92.100 activate
+            no neighbor 192.168.92.100 activate
+            network 10.255.92.13/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.92.100 activate
+            network 10.255.92.13/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.92.100 activate
+           exit-address-family
+          exit
+          router bgp 65000 vrf shared
+           bgp router-id 10.255.92.13
+           address-family ipv4 unicast
+            redistribute connected
+            label vpn export 923
+            rd vpn export 65000:923
+            rt vpn export 65000:300
+            rt vpn import 65000:100 65000:200
+            import vpn
+            export vpn
+           exit-address-family
+          end
+
+links:
+  - name: core
+    type: bridge
+    members:
+      - { router: rr, ifname: eth1, ipv4: 192.168.92.100/24 }
+      - { router: red, ifname: eth1, ipv4: 192.168.92.11/24 }
+      - { router: blue, ifname: eth1, ipv4: 192.168.92.12/24 }
+      - { router: shared, ifname: eth1, ipv4: 192.168.92.13/24 }
+
+pings:
+  - name: red-host-to-shared-host
+    from:
+      router: red
+      namespace: host
+      address: 10.10.92.11
+    to: 10.30.92.13
+
+  - name: blue-host-to-shared-host
+    from:
+      router: blue
+      namespace: host
+      address: 10.20.92.12
+    to: 10.30.92.13
+
+  - name: shared-host-to-red-host
+    from:
+      router: shared
+      namespace: host
+      address: 10.30.92.13
+    to: 10.10.92.11
+
+  - name: shared-host-to-blue-host
+    from:
+      router: shared
+      namespace: host
+      address: 10.30.92.13
+    to: 10.20.92.12
