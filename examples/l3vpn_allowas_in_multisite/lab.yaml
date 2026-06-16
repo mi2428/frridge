@@ -1,0 +1,302 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: l3vpn-allowas-in-multisite
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.97.100/32
+    linux:
+      routes:
+        - to: 10.255.97.11/32
+          via: 192.168.97.11
+          dev: eth1
+        - to: 10.255.97.12/32
+          via: 192.168.97.12
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.97.100
+           bgp cluster-id 10.255.97.100
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.255.97.11 remote-as 65000
+           neighbor 10.255.97.11 update-source lo
+           neighbor 10.255.97.12 remote-as 65000
+           neighbor 10.255.97.12 update-source lo
+           neighbor 192.168.97.11 remote-as 65000
+           neighbor 192.168.97.12 remote-as 65000
+           address-family ipv4 unicast
+            no neighbor 10.255.97.11 activate
+            no neighbor 10.255.97.12 activate
+            no neighbor 192.168.97.11 activate
+            no neighbor 192.168.97.12 activate
+            network 10.255.97.100/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.97.11 activate
+            neighbor 192.168.97.11 route-reflector-client
+            neighbor 192.168.97.12 activate
+            neighbor 192.168.97.12 route-reflector-client
+            network 10.255.97.100/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.97.11 activate
+            neighbor 10.255.97.11 route-reflector-client
+            neighbor 10.255.97.12 activate
+            neighbor 10.255.97.12 route-reflector-client
+           exit-address-family
+          end
+
+  pe1:
+    loopbacks:
+      - 10.255.97.11/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1100
+      interfaces:
+        - name: eth2
+          master: tenant
+      routes:
+        - to: 10.255.97.100/32
+          via: 192.168.97.100
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe1
+          interface eth1
+           mpls bgp forwarding
+          exit
+          interface eth2
+           ip address 192.168.11.0/31
+          exit
+          router bgp 65000
+           bgp router-id 10.255.97.11
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.255.97.100 remote-as 65000
+           neighbor 10.255.97.100 update-source lo
+           neighbor 192.168.97.100 remote-as 65000
+           address-family ipv4 unicast
+            no neighbor 10.255.97.100 activate
+            no neighbor 192.168.97.100 activate
+            network 10.255.97.11/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.97.100 activate
+            network 10.255.97.11/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.97.100 activate
+           exit-address-family
+          exit
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.97.11
+           no bgp default ipv4-unicast
+           no bgp ebgp-requires-policy
+           neighbor 192.168.11.1 remote-as 65010
+           address-family ipv4 unicast
+            neighbor 192.168.11.1 activate
+            label vpn export 971
+            rd vpn export 65000:971
+            rt vpn both 65000:97
+            import vpn
+            export vpn
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.97.12/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1200
+      interfaces:
+        - name: eth2
+          master: tenant
+      routes:
+        - to: 10.255.97.100/32
+          via: 192.168.97.100
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe2
+          interface eth1
+           mpls bgp forwarding
+          exit
+          interface eth2
+           ip address 192.168.21.0/31
+          exit
+          router bgp 65000
+           bgp router-id 10.255.97.12
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.255.97.100 remote-as 65000
+           neighbor 10.255.97.100 update-source lo
+           neighbor 192.168.97.100 remote-as 65000
+           address-family ipv4 unicast
+            no neighbor 10.255.97.100 activate
+            no neighbor 192.168.97.100 activate
+            network 10.255.97.12/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.97.100 activate
+            network 10.255.97.12/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.97.100 activate
+           exit-address-family
+          exit
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.97.12
+           no bgp default ipv4-unicast
+           no bgp ebgp-requires-policy
+           neighbor 192.168.21.1 remote-as 65010
+           address-family ipv4 unicast
+            neighbor 192.168.21.1 activate
+            label vpn export 972
+            rd vpn export 65000:972
+            rt vpn both 65000:97
+            import vpn
+            export vpn
+           exit-address-family
+          end
+
+  ce1:
+    linux:
+      veths:
+        - name: lan0
+          peer: host0
+          addresses: [10.10.97.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.10.97.11/24]
+            defaultVia: 10.10.97.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname ce1
+          interface eth1
+           ip address 192.168.11.1/31
+          exit
+          router bgp 65010
+           bgp router-id 10.255.11.1
+           no bgp ebgp-requires-policy
+           neighbor 192.168.11.0 remote-as 65000
+           address-family ipv4 unicast
+            neighbor 192.168.11.0 activate
+            neighbor 192.168.11.0 allowas-in 1
+            network 10.10.97.0/24
+           exit-address-family
+          end
+
+  ce2:
+    linux:
+      veths:
+        - name: lan0
+          peer: host0
+          addresses: [10.20.97.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.20.97.12/24]
+            defaultVia: 10.20.97.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname ce2
+          interface eth1
+           ip address 192.168.21.1/31
+          exit
+          router bgp 65010
+           bgp router-id 10.255.11.2
+           no bgp ebgp-requires-policy
+           neighbor 192.168.21.0 remote-as 65000
+           address-family ipv4 unicast
+            neighbor 192.168.21.0 activate
+            neighbor 192.168.21.0 allowas-in 1
+            network 10.20.97.0/24
+           exit-address-family
+          end
+
+links:
+  - name: core
+    type: bridge
+    members:
+      - { router: rr, ifname: eth1, ipv4: 192.168.97.100/24 }
+      - { router: pe1, ifname: eth1, ipv4: 192.168.97.11/24 }
+      - { router: pe2, ifname: eth1, ipv4: 192.168.97.12/24 }
+
+  - name: pe1-ce1
+    type: p2p
+    members:
+      - { router: pe1, ifname: eth2 }
+      - { router: ce1, ifname: eth1 }
+
+  - name: pe2-ce2
+    type: p2p
+    members:
+      - { router: pe2, ifname: eth2 }
+      - { router: ce2, ifname: eth1 }
+
+pings:
+  - name: ce1-host-to-ce2-host
+    from:
+      router: ce1
+      namespace: host
+      address: 10.10.97.11
+    to: 10.20.97.12
+
+  - name: ce2-host-to-ce1-host
+    from:
+      router: ce2
+      namespace: host
+      address: 10.20.97.12
+    to: 10.10.97.11
+
+  - name: ce1-host-to-ce2-lan-gw
+    from:
+      router: ce1
+      namespace: host
+      address: 10.10.97.11
+    to: 10.20.97.1
+
+  - name: ce2-host-to-ce1-lan-gw
+    from:
+      router: ce2
+      namespace: host
+      address: 10.20.97.12
+    to: 10.10.97.1
