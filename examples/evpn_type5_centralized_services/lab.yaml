@@ -1,0 +1,289 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-type5-centralized-services
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.98.100/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.98.100
+           bgp cluster-id 10.255.98.100
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.98.0 remote-as 65000
+           neighbor 10.0.98.2 remote-as 65000
+           neighbor 10.0.98.4 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.98.100/32
+            neighbor 10.0.98.0 activate
+            neighbor 10.0.98.0 route-reflector-client
+            neighbor 10.0.98.0 next-hop-self force
+            neighbor 10.0.98.2 activate
+            neighbor 10.0.98.2 route-reflector-client
+            neighbor 10.0.98.2 next-hop-self force
+            neighbor 10.0.98.4 activate
+            neighbor 10.0.98.4 route-reflector-client
+            neighbor 10.0.98.4 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.98.0 activate
+            neighbor 10.0.98.0 route-reflector-client
+            neighbor 10.0.98.2 activate
+            neighbor 10.0.98.2 route-reflector-client
+            neighbor 10.0.98.4 activate
+            neighbor 10.0.98.4 route-reflector-client
+           exit-address-family
+          end
+      - kind: shell
+        run: |
+          set -e
+          sleep 5
+
+  branch1:
+    loopbacks:
+      - 10.255.98.11/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1100
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:00:98:51
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.98.11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      veths:
+        - name: lan0
+          peer: host0
+          master: tenant
+          addresses: [10.10.98.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.10.98.11/24]
+            defaultVia: 10.10.98.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname branch1
+          router bgp 65000
+           bgp router-id 10.255.98.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.98.1 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.98.11/32
+            neighbor 10.0.98.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.98.1 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.98.11
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  branch2:
+    loopbacks:
+      - 10.255.98.12/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1200
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:00:98:52
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.98.12
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      veths:
+        - name: lan0
+          peer: host0
+          master: tenant
+          addresses: [10.20.98.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.20.98.12/24]
+            defaultVia: 10.20.98.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname branch2
+          router bgp 65000
+           bgp router-id 10.255.98.12
+           no bgp default ipv4-unicast
+           neighbor 10.0.98.3 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.98.12/32
+            neighbor 10.0.98.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.98.3 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.98.12
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  services:
+    loopbacks:
+      - 10.255.98.13/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1300
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:00:98:53
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.98.13
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      veths:
+        - name: lan0
+          peer: host0
+          master: tenant
+          addresses: [10.30.98.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.30.98.13/24]
+            defaultVia: 10.30.98.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname services
+          router bgp 65000
+           bgp router-id 10.255.98.13
+           no bgp default ipv4-unicast
+           neighbor 10.0.98.5 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.98.13/32
+            neighbor 10.0.98.5 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.98.5 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.98.13
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+links:
+  - name: rr-branch1
+    type: p2p
+    members:
+      - { router: branch1, ifname: eth1, ipv4: 10.0.98.0/31 }
+      - { router: rr, ifname: eth1, ipv4: 10.0.98.1/31 }
+
+  - name: rr-branch2
+    type: p2p
+    members:
+      - { router: branch2, ifname: eth1, ipv4: 10.0.98.2/31 }
+      - { router: rr, ifname: eth2, ipv4: 10.0.98.3/31 }
+
+  - name: rr-services
+    type: p2p
+    members:
+      - { router: services, ifname: eth1, ipv4: 10.0.98.4/31 }
+      - { router: rr, ifname: eth3, ipv4: 10.0.98.5/31 }
+
+pings:
+  - name: branch1-host-to-services-host
+    from:
+      router: branch1
+      namespace: host
+      address: 10.10.98.11
+    to: 10.30.98.13
+
+  - name: branch2-host-to-services-host
+    from:
+      router: branch2
+      namespace: host
+      address: 10.20.98.12
+    to: 10.30.98.13
+
+  - name: services-host-to-branch1-host
+    from:
+      router: services
+      namespace: host
+      address: 10.30.98.13
+    to: 10.10.98.11
+
+  - name: services-host-to-branch2-host
+    from:
+      router: services
+      namespace: host
+      address: 10.30.98.13
+    to: 10.20.98.12
+
+  - name: branch1-host-to-branch2-host
+    from:
+      router: branch1
+      namespace: host
+      address: 10.10.98.11
+    to: 10.20.98.12
