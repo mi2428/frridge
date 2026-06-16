@@ -5,23 +5,29 @@ lab:
   workdir: .frridge
 
 routers:
-  as1:
-    loopbacks:
-      - 10.255.0.1/32
+  pe1:
     linux:
       bridges:
         - name: br10
-          interfaces: [eth2]
+          interfaces: [eth1]
           namespaces:
             - name: host
               ifname: eth0
               mac: 02:00:00:00:a0:11
               addresses: [10.10.10.11/24]
+
+  asbr1:
+    loopbacks:
+      - 10.255.0.1/32
+    linux:
+      bridges:
+        - name: br10
+          interfaces: [eth1, eth2]
     commands:
       - kind: vtysh
         run: |
           configure terminal
-          hostname as1
+          hostname asbr1
           router bgp 65001
            bgp router-id 10.255.0.1
            neighbor 192.0.2.1 remote-as 65002
@@ -31,23 +37,18 @@ routers:
            exit-address-family
           end
 
-  as2:
+  asbr2:
     loopbacks:
       - 10.255.0.2/32
     linux:
       bridges:
         - name: br10
-          interfaces: [eth2]
-          namespaces:
-            - name: host
-              ifname: eth0
-              mac: 02:00:00:00:a0:12
-              addresses: [10.10.10.12/24]
+          interfaces: [eth1, eth2]
     commands:
       - kind: vtysh
         run: |
           configure terminal
-          hostname as2
+          hostname asbr2
           router bgp 65002
            bgp router-id 10.255.0.2
            neighbor 192.0.2.0 remote-as 65001
@@ -57,28 +58,56 @@ routers:
            exit-address-family
           end
 
+  pe2:
+    linux:
+      bridges:
+        - name: br10
+          interfaces: [eth1]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:a0:12
+              addresses: [10.10.10.12/24]
+
 links:
-  - name: border-ip
+  - name: pe1-asbr1-handoff
     type: p2p
     members:
-      - router: as1
+      - router: pe1
         ifname: eth1
+      - router: asbr1
+        ifname: eth1
+
+  - name: asbr1-asbr2-service
+    type: p2p
+    members:
+      - router: asbr1
+        ifname: eth2
+      - router: asbr2
+        ifname: eth1
+
+  - name: asbr2-pe2-handoff
+    type: p2p
+    members:
+      - router: asbr2
+        ifname: eth2
+      - router: pe2
+        ifname: eth1
+
+  - name: asbr1-asbr2-border
+    type: p2p
+    members:
+      - router: asbr1
+        ifname: eth3
         ipv4: 192.0.2.0/31
-      - router: as2
-        ifname: eth1
+      - router: asbr2
+        ifname: eth3
         ipv4: 192.0.2.1/31
 
-  - name: service-handoff
-    type: p2p
-    members:
-      - router: as1
-        ifname: eth2
-      - router: as2
-        ifname: eth2
-
 pings:
-  - name: as1-host-to-as2-host
+  - name: pe1-host-to-pe2-host
     from:
-      router: as1
+      router: pe1
       namespace: host
+      address: 10.10.10.11
     to: 10.10.10.12
