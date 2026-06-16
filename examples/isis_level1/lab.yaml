@@ -1,0 +1,104 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: isis-level1-line
+  workdir: .frridge
+
+routers:
+  r1:
+    loopbacks:
+      - 10.255.72.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r1
+          router isis CORE
+           net 49.0001.0000.0000.0101.00
+           is-type level-1
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-1
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          end
+
+  r2:
+    loopbacks:
+      - 10.255.72.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r2
+          router isis CORE
+           net 49.0001.0000.0000.0102.00
+           is-type level-1
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-1
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          interface eth2
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          end
+
+  r3:
+    loopbacks:
+      - 10.255.72.3/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r3
+          router isis CORE
+           net 49.0001.0000.0000.0103.00
+           is-type level-1
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-1
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          end
+
+links:
+  - name: r1-r2
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1, ipv4: 10.0.72.0/31 }
+      - { router: r2, ifname: eth1, ipv4: 10.0.72.1/31 }
+
+  - name: r2-r3
+    type: p2p
+    members:
+      - { router: r2, ifname: eth2, ipv4: 10.0.72.2/31 }
+      - { router: r3, ifname: eth1, ipv4: 10.0.72.3/31 }
+
+pings:
+  - name: r1-to-r3-loopback
+    from:
+      router: r1
+    to: 10.255.72.3
