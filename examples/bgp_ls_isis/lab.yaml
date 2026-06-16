@@ -1,0 +1,151 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: bgp-ls-isis
+  workdir: .frridge
+  defaults:
+    image: frridge-frr:source
+
+routers:
+  r1:
+    loopbacks:
+      - 10.255.99.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r1
+          router isis CORE
+           net 49.0001.0000.0000.9901.00
+           is-type level-2-only
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-2
+           mpls-te on
+           mpls-te router-address 10.255.99.1
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+           link-params
+           exit-link-params
+          exit
+          end
+
+  r2:
+    loopbacks:
+      - 10.255.99.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r2
+          router isis CORE
+           net 49.0001.0000.0000.9902.00
+           is-type level-2-only
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-2
+           mpls-te on
+           mpls-te router-address 10.255.99.2
+           mpls-te export
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+           link-params
+           exit-link-params
+          exit
+          interface eth2
+           ip router isis CORE
+           isis network point-to-point
+           link-params
+           exit-link-params
+          exit
+          router bgp 65102
+           bgp router-id 10.255.99.2
+           no bgp default ipv4-unicast
+           neighbor 192.0.2.1 remote-as 65000
+           address-family link-state
+            neighbor 192.0.2.1 activate
+           exit-address-family
+          end
+
+  r3:
+    loopbacks:
+      - 10.255.99.3/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r3
+          router isis CORE
+           net 49.0001.0000.0000.9903.00
+           is-type level-2-only
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-2
+           mpls-te on
+           mpls-te router-address 10.255.99.3
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+           link-params
+           exit-link-params
+          exit
+          end
+
+  collector:
+    loopbacks:
+      - 10.255.99.100/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname collector
+          router bgp 65000
+           bgp router-id 10.255.99.100
+           no bgp default ipv4-unicast
+           neighbor 192.0.2.0 remote-as 65102
+           address-family link-state
+            neighbor 192.0.2.0 activate
+           exit-address-family
+          end
+
+links:
+  - name: r1-r2
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1, ipv4: 10.0.99.0/31 }
+      - { router: r2, ifname: eth1, ipv4: 10.0.99.1/31 }
+
+  - name: r2-r3
+    type: p2p
+    members:
+      - { router: r2, ifname: eth2, ipv4: 10.0.99.2/31 }
+      - { router: r3, ifname: eth1, ipv4: 10.0.99.3/31 }
+
+  - name: r2-collector
+    type: p2p
+    members:
+      - { router: r2, ifname: eth3, ipv4: 192.0.2.0/31 }
+      - { router: collector, ifname: eth1, ipv4: 192.0.2.1/31 }
+
+pings:
+  - name: r1-to-r3-loopback
+    from:
+      router: r1
+    to: 10.255.99.3

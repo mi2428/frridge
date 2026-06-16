@@ -19,8 +19,8 @@ STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@latest
 REVIVE      ?= $(GO) run github.com/mgechev/revive@latest -formatter friendly
 MODERNIZE   ?= $(GO) run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -test
 GO_LDFLAGS  := -s -w -X $(VERSION_PKG).Version=$(PACKAGE_VERSION)
-HOST_GOOS   := $(shell $(GO) env GOOS)
-HOST_GOARCH := $(shell $(GO) env GOARCH)
+HOST_GOOS   = $(shell $(GO) env GOOS)
+HOST_GOARCH = $(shell $(GO) env GOARCH)
 GO_PACKAGES := ./...
 GOFILES     := $(shell git ls-files --cached --others --exclude-standard -- '*.go' | while read -r file; do [ -f "$$file" ] && printf '%s\n' "$$file"; done)
 
