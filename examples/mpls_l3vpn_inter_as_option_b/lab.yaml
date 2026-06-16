@@ -1,0 +1,257 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: mpls-l3vpn-inter-as-option-b
+  workdir: .frridge
+
+routers:
+  pe1:
+    loopbacks:
+      - 10.255.1.11/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.eth1.input=1
+          ip link add tenant type vrf table 1100
+          ip link set tenant up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master tenant
+          ip addr add 172.31.0.1/24 dev lan0
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip addr add 172.31.0.10/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ip route replace default via 172.31.0.1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe1
+          router bgp 65001
+           bgp router-id 10.255.1.11
+           no bgp ebgp-requires-policy
+           no bgp enforce-first-as
+           neighbor 10.255.1.100 remote-as 65001
+           neighbor 10.255.1.100 update-source lo
+           neighbor 192.168.0.100 remote-as 65001
+           address-family ipv4 unicast
+            no neighbor 192.168.0.100 activate
+            no neighbor 10.255.1.100 activate
+            network 10.255.1.11/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.0.100 activate
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.1.100 activate
+           exit-address-family
+          exit
+          router bgp 65001 vrf tenant
+           bgp router-id 10.255.1.11
+           address-family ipv4 unicast
+            redistribute connected
+            label vpn export 101
+            rd vpn export 65001:101
+            rt vpn both 65000:101
+            export vpn
+            import vpn
+           exit-address-family
+          end
+
+  asbr1:
+    loopbacks:
+      - 10.255.1.1/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr1
+          interface eth1
+           mpls enable
+           mpls bgp l3vpn-multi-domain-switching
+          exit
+          interface eth2
+           mpls enable
+           mpls bgp forwarding
+           mpls bgp l3vpn-multi-domain-switching
+          exit
+          router bgp 65001
+           bgp router-id 10.255.1.1
+           no bgp ebgp-requires-policy
+           no bgp enforce-first-as
+           neighbor 10.255.1.100 remote-as 65001
+           neighbor 10.255.1.100 update-source lo
+           neighbor 192.168.0.100 remote-as 65001
+           neighbor 192.168.1.200 remote-as 65010
+           address-family ipv4 unicast
+            no neighbor 192.168.0.100 activate
+            no neighbor 192.168.1.200 activate
+            network 10.255.1.1/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.0.100 activate
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.1.100 activate
+            neighbor 10.255.1.100 next-hop-self
+            neighbor 192.168.1.200 activate
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.2.12/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.eth1.input=1
+          ip link add tenant type vrf table 1200
+          ip link set tenant up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master tenant
+          ip addr add 172.31.1.1/24 dev lan0
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip addr add 172.31.1.10/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ip route replace default via 172.31.1.1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe2
+          interface eth1
+           mpls bgp forwarding
+          exit
+          router bgp 65002
+           bgp router-id 10.255.2.12
+           no bgp ebgp-requires-policy
+           no bgp enforce-first-as
+           neighbor 192.168.1.200 remote-as 65010
+           address-family ipv4 unicast
+            no neighbor 192.168.1.200 activate
+            network 10.255.2.12/32
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 192.168.1.200 activate
+           exit-address-family
+          exit
+          router bgp 65002 vrf tenant
+           bgp router-id 10.255.2.12
+           address-family ipv4 unicast
+            redistribute connected
+            label vpn export 102
+            rd vpn export 65002:102
+            rt vpn both 65000:101
+            export vpn
+            import vpn
+           exit-address-family
+          end
+
+  rr1:
+    loopbacks:
+      - 10.255.1.100/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr1
+          router bgp 65001
+           bgp router-id 10.255.1.100
+           no bgp ebgp-requires-policy
+           neighbor 10.255.1.1 remote-as 65001
+           neighbor 10.255.1.1 update-source lo
+           neighbor 192.168.0.2 remote-as 65001
+           neighbor 10.255.1.11 remote-as 65001
+           neighbor 10.255.1.11 update-source lo
+           neighbor 192.168.0.1 remote-as 65001
+           address-family ipv4 unicast
+            no neighbor 192.168.0.1 activate
+            no neighbor 10.255.1.11 activate
+            no neighbor 192.168.0.2 activate
+            no neighbor 10.255.1.1 activate
+            network 10.255.1.100/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 192.168.0.1 activate
+            neighbor 192.168.0.2 activate
+            neighbor 192.168.0.1 route-reflector-client
+            neighbor 192.168.0.2 route-reflector-client
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 10.255.1.11 activate
+            neighbor 10.255.1.1 activate
+            neighbor 10.255.1.11 route-reflector-client
+            neighbor 10.255.1.1 route-reflector-client
+           exit-address-family
+          end
+
+  rs1:
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rs1
+          router bgp 65010
+           bgp router-id 10.255.10.10
+           no bgp ebgp-requires-policy
+           neighbor 192.168.1.2 remote-as 65001
+           neighbor 192.168.1.3 remote-as 65002
+           address-family ipv4 unicast
+            no neighbor 192.168.1.2 activate
+            no neighbor 192.168.1.3 activate
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 192.168.1.2 activate
+            neighbor 192.168.1.3 activate
+            neighbor 192.168.1.2 route-server-client
+            neighbor 192.168.1.3 route-server-client
+           exit-address-family
+          end
+
+links:
+  - name: core-side
+    type: bridge
+    members:
+      - router: pe1
+        ifname: eth1
+        ipv4: 192.168.0.1/24
+      - router: asbr1
+        ifname: eth1
+        ipv4: 192.168.0.2/24
+      - router: rr1
+        ifname: eth1
+        ipv4: 192.168.0.100/24
+
+  - name: inter-as-side
+    type: bridge
+    members:
+      - router: asbr1
+        ifname: eth2
+        ipv4: 192.168.1.2/24
+      - router: pe2
+        ifname: eth1
+        ipv4: 192.168.1.3/24
+      - router: rs1
+        ifname: eth1
+        ipv4: 192.168.1.200/24
+
+pings:
+  - name: pe1-host-to-pe2-host
+    from:
+      router: pe1
+      namespace: host
+      address: 172.31.0.10
+    to: 172.31.1.10
