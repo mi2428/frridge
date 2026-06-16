@@ -1,0 +1,374 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-type5-srv6-l3vpn-stiching
+  workdir: .frridge
+  defaults:
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+      net.ipv4.conf.default.rp_filter: "0"
+      net.ipv6.conf.all.forwarding: "1"
+      net.ipv6.conf.all.seg6_enabled: "1"
+      net.ipv6.conf.default.seg6_enabled: "1"
+
+routers:
+  le1:
+    loopbacks:
+      - 10.255.101.11/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link add tenant type vrf table 1010
+          ip link set tenant up
+
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:01:50:11
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.101.11 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master tenant
+          ip addr add 10.10.101.1/24 dev lan0
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip addr add 10.10.101.11/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ip route replace default via 10.10.101.1
+          for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
+            echo 0 > "$f"
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname le1
+          router bgp 65010
+           bgp router-id 10.255.101.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.101.1 remote-as 65010
+           address-family ipv4 unicast
+            network 10.255.101.11/32
+            neighbor 10.0.101.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.101.1 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65010 vrf tenant
+           bgp router-id 10.255.101.11
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  gw1:
+    loopbacks:
+      - 10.255.101.1/32
+      - 2001:db8:56:1::1/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.vrf.strict_mode=1
+          sysctl -w net.ipv6.conf.eth2.seg6_enabled=1
+
+          ip link add tenant type vrf table 1100
+          ip link set tenant up
+
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:01:50:01
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.101.1 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname gw1
+          interface eth2
+           ipv6 address 2001:db8:56:12::1/64
+          exit
+          segment-routing
+           srv6
+            locators
+             locator default
+              prefix 2001:db8:56:1::/64
+          ipv6 route 2001:db8:56:2::/64 2001:db8:56:12::2
+          router bgp 65010
+           bgp router-id 10.255.101.1
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.101.0 remote-as 65010
+           neighbor 2001:db8:56:12::2 remote-as 65020
+           neighbor 2001:db8:56:12::2 capability extended-nexthop
+           segment-routing srv6
+            locator default
+           address-family ipv4 unicast
+            network 10.255.101.1/32
+            neighbor 10.0.101.0 activate
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 2001:db8:56:12::2 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.101.0 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65010 vrf tenant
+           bgp router-id 10.255.101.1
+           address-family ipv4 unicast
+            sid vpn export 1
+            rd vpn export 65010:5000
+            rt vpn both 65000:5000
+            import vpn
+            export vpn
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+      - kind: shell
+        run: |
+          set -e
+          ip -6 route replace local 2001:db8:56:1:1::/128 encap seg6local action End.DT4 vrftable 1100 dev lo
+          for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
+            echo 0 > "$f"
+          done
+
+  gw2:
+    loopbacks:
+      - 10.255.102.1/32
+      - 2001:db8:56:2::1/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.vrf.strict_mode=1
+          sysctl -w net.ipv6.conf.eth2.seg6_enabled=1
+
+          ip link add tenant type vrf table 1200
+          ip link set tenant up
+
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:02:50:01
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.102.1 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname gw2
+          interface eth2
+           ipv6 address 2001:db8:56:12::2/64
+          exit
+          segment-routing
+           srv6
+            locators
+             locator default
+              prefix 2001:db8:56:2::/64
+          ipv6 route 2001:db8:56:1::/64 2001:db8:56:12::1
+          router bgp 65020
+           bgp router-id 10.255.102.1
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.102.1 remote-as 65020
+           neighbor 2001:db8:56:12::1 remote-as 65010
+           neighbor 2001:db8:56:12::1 capability extended-nexthop
+           segment-routing srv6
+            locator default
+           address-family ipv4 unicast
+            network 10.255.102.1/32
+            neighbor 10.0.102.1 activate
+           exit-address-family
+           address-family ipv4 vpn
+            neighbor 2001:db8:56:12::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.102.1 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65020 vrf tenant
+           bgp router-id 10.255.102.1
+           address-family ipv4 unicast
+            sid vpn export 1
+            rd vpn export 65020:5000
+            rt vpn both 65000:5000
+            import vpn
+            export vpn
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+      - kind: shell
+        run: |
+          set -e
+          ip -6 route replace local 2001:db8:56:2:1::/128 encap seg6local action End.DT4 vrftable 1200 dev lo
+          for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
+            echo 0 > "$f"
+          done
+
+  re1:
+    loopbacks:
+      - 10.255.102.11/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link add tenant type vrf table 1020
+          ip link set tenant up
+
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:02:50:11
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.102.11 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master tenant
+          ip addr add 10.20.102.1/24 dev lan0
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip addr add 10.20.102.11/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ip route replace default via 10.20.102.1
+          for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
+            echo 0 > "$f"
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname re1
+          router bgp 65020
+           bgp router-id 10.255.102.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.102.0 remote-as 65020
+           address-family ipv4 unicast
+            network 10.255.102.11/32
+            neighbor 10.0.102.0 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.102.0 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65020 vrf tenant
+           bgp router-id 10.255.102.11
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+links:
+  - name: le1-gw1
+    type: p2p
+    members:
+      - router: le1
+        ifname: eth1
+        ipv4: 10.0.101.0/31
+      - router: gw1
+        ifname: eth1
+        ipv4: 10.0.101.1/31
+
+  - name: gw1-gw2
+    type: p2p
+    members:
+      - router: gw1
+        ifname: eth2
+      - router: gw2
+        ifname: eth2
+
+  - name: gw2-re1
+    type: p2p
+    members:
+      - router: gw2
+        ifname: eth1
+        ipv4: 10.0.102.0/31
+      - router: re1
+        ifname: eth1
+        ipv4: 10.0.102.1/31
+
+pings:
+  - name: left-evpn-edge-loopback
+    from:
+      router: le1
+      address: 10.255.101.11
+    to: 10.255.101.1
+    count: 2
+
+  - name: right-evpn-edge-loopback
+    from:
+      router: re1
+      address: 10.255.102.11
+    to: 10.255.102.1
+    count: 2
+
+  - name: srv6-core-link
+    from:
+      router: gw1
+      address: 2001:db8:56:12::1
+    to: 2001:db8:56:12::2
+    count: 2
+
+  - name: srv6-locator-reachability
+    from:
+      router: gw1
+      address: 2001:db8:56:1::1
+    to: 2001:db8:56:2::1
+    count: 2
+
+  - name: left-host-to-right-host
+    from:
+      router: le1
+      namespace: host
+      address: 10.10.101.11
+    to: 10.20.102.11
+    count: 2
+
+  - name: right-host-to-left-host
+    from:
+      router: re1
+      namespace: host
+      address: 10.20.102.11
+    to: 10.10.101.11
+    count: 2
