@@ -1,0 +1,101 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: ospf-nssa-external-leak
+  workdir: .frridge
+
+routers:
+  r1:
+    loopbacks:
+      - 10.255.98.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r1
+          interface eth1
+           ip ospf network point-to-point
+          exit
+          router ospf
+           ospf router-id 10.255.98.1
+           network 10.0.98.0/31 area 0.0.0.0
+           network 10.255.98.1/32 area 0.0.0.0
+           passive-interface lo
+          end
+
+  abr:
+    loopbacks:
+      - 10.255.98.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname abr
+          interface eth1
+           ip ospf network point-to-point
+          exit
+          interface eth2
+           ip ospf network point-to-point
+          exit
+          router ospf
+           ospf router-id 10.255.98.2
+           area 0.0.0.1 nssa
+           network 10.0.98.0/31 area 0.0.0.0
+           network 10.0.98.2/31 area 0.0.0.1
+           network 10.255.98.2/32 area 0.0.0.0
+           passive-interface lo
+          end
+
+  asbr:
+    loopbacks:
+      - 10.255.98.3/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link add srv0 type veth peer name svc0
+          ip addr add 192.0.2.0/31 dev srv0
+          ip link set srv0 up
+          ip netns add svc
+          ip link set svc0 netns svc
+          ip netns exec svc ip link set lo up
+          ip netns exec svc ip link set svc0 name eth0
+          ip netns exec svc ip addr add 192.0.2.1/31 dev eth0
+          ip netns exec svc ip link set eth0 up
+          ip netns exec svc ip addr add 172.16.98.10/32 dev lo
+          ip netns exec svc ip route replace default via 192.0.2.0
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr
+          ip route 172.16.98.10/32 192.0.2.1
+          interface eth1
+           ip ospf network point-to-point
+          exit
+          router ospf
+           ospf router-id 10.255.98.3
+           area 0.0.0.1 nssa
+           network 10.0.98.2/31 area 0.0.0.1
+           network 10.255.98.3/32 area 0.0.0.1
+           passive-interface lo
+           redistribute static metric-type 2
+          end
+
+links:
+  - name: r1-abr
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1, ipv4: 10.0.98.0/31 }
+      - { router: abr, ifname: eth1, ipv4: 10.0.98.1/31 }
+
+  - name: abr-asbr
+    type: p2p
+    members:
+      - { router: abr, ifname: eth2, ipv4: 10.0.98.2/31 }
+      - { router: asbr, ifname: eth1, ipv4: 10.0.98.3/31 }
+
+pings:
+  - name: r1-to-service-loopback
+    from:
+      router: r1
+    to: 172.16.98.10
