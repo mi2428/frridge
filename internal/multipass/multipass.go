@@ -36,7 +36,6 @@ const (
 
 // Service is the high-level API used by the frridge-mp CLI.
 type Service interface {
-	Ensure(ctx context.Context, req Request) (Environment, error)
 	Shell(ctx context.Context, req Request) error
 	Exec(ctx context.Context, req Request, command []string) error
 	Frridge(ctx context.Context, req Request, args []string) error
@@ -145,10 +144,10 @@ func NewDefault() (*Manager, error) {
 	return NewManager(newSystemCLI(), builder), nil
 }
 
-// Ensure makes sure the VM exists, the requested host directories are mounted,
-// the guest dependencies are installed, and the Linux frridge binary is
-// present.
-func (m *Manager) Ensure(ctx context.Context, req Request) (Environment, error) {
+// prepare makes sure the VM exists, the requested host directories are
+// mounted, the guest dependencies are installed, and the Linux frridge binary
+// is present.
+func (m *Manager) prepare(ctx context.Context, req Request) (Environment, error) {
 	resolved, err := resolveRequest(req)
 	if err != nil {
 		return Environment{}, err
@@ -158,7 +157,7 @@ func (m *Manager) Ensure(ctx context.Context, req Request) (Environment, error) 
 
 // Shell opens an interactive login shell rooted at the mounted host directory.
 func (m *Manager) Shell(ctx context.Context, req Request) error {
-	env, err := m.Ensure(ctx, req)
+	env, err := m.prepare(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -181,7 +180,7 @@ func (m *Manager) Exec(ctx context.Context, req Request, command []string) error
 		return fmt.Errorf("guest command must not be empty")
 	}
 
-	env, err := m.Ensure(ctx, req)
+	env, err := m.prepare(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -205,7 +204,7 @@ func (m *Manager) Frridge(ctx context.Context, req Request, args []string) error
 		return fmt.Errorf("frridge arguments must not be empty")
 	}
 
-	env, err := m.Ensure(ctx, req)
+	env, err := m.prepare(ctx, req)
 	if err != nil {
 		return err
 	}

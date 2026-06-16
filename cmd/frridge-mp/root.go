@@ -39,26 +39,6 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	flags.StringVar(&req.RepoDir, "repo-dir", "", "Path to the frridge source tree used to build the guest binary")
 	flags.StringVar(&req.HostDir, "host-dir", "", "Host directory mounted into the guest for topology files and lab assets")
 
-	ensureCmd := &cobra.Command{
-		Use:   "ensure",
-		Short: "Create or update the Multipass VM and guest-local frridge binary",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			env, err := service.Ensure(cmd.Context(), req)
-			if err != nil {
-				return err
-			}
-
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "instance: %s\nworkspace: %s\nbinary: %s\nworkdir: %s\n",
-				env.InstanceName,
-				env.GuestHostDir,
-				env.GuestBinary,
-				env.GuestWorkDir,
-			)
-			return nil
-		},
-	}
-	root.AddCommand(ensureCmd)
-
 	shellCmd := &cobra.Command{
 		Use:   "shell",
 		Short: "Open a shell inside the guest at the mounted host workspace",

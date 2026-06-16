@@ -6,8 +6,8 @@ They do **not** seed any FRR routing config.
 
 They intentionally use `frridge-frr:latest`, matching the rest of the
 repository's FRR labs.
-On Multipass, `frridge-mp ensure` prepares that image inside the guest so a
-fresh VM can still run these labs directly.
+On Multipass, `frridge-mp` prepares that image inside the guest automatically,
+so a fresh VM can still run these labs directly.
 They also keep `lab.defaults.privileged: true`, so interface setup and FRR
 daemon startup behave the same way as the other examples.
 

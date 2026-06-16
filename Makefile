@@ -112,18 +112,6 @@ clean: ## Remove local build artifacts
 
 ##@ Multipass
 
-.PHONY: mp-launch
-mp-launch: ## Ensure the Multipass VM and guest-local frridge binary exist
-	@"$(GO)" run ./cmd/frridge-mp \
-		--instance "$(MP_NAME)" \
-		--image "$(MP_IMAGE)" \
-		--cpus "$(MP_CPUS)" \
-		--memory "$(MP_MEM)" \
-		--disk "$(MP_DISK)" \
-		--repo-dir "$(CURDIR)" \
-		--host-dir "$(VERIFY_HOST_DIR)" \
-		ensure
-
 .PHONY: mp-shell
 mp-shell: ## Open a shell in the Multipass workspace
 	@"$(GO)" run ./cmd/frridge-mp \

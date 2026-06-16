@@ -13,18 +13,11 @@ import (
 )
 
 type fakeService struct {
-	ensureReq   multipass.Request
-	ensureEnv   multipass.Environment
 	shellReq    multipass.Request
 	execReq     multipass.Request
 	execCommand []string
 	frridgeReq  multipass.Request
 	frridgeArgs []string
-}
-
-func (f *fakeService) Ensure(_ context.Context, req multipass.Request) (multipass.Environment, error) {
-	f.ensureReq = req
-	return f.ensureEnv, nil
 }
 
 func (f *fakeService) Shell(_ context.Context, req multipass.Request) error {
@@ -42,36 +35,6 @@ func (f *fakeService) Frridge(_ context.Context, req multipass.Request, args []s
 	f.frridgeReq = req
 	f.frridgeArgs = append([]string(nil), args...)
 	return nil
-}
-
-func TestEnsurePrintsPreparedPaths(t *testing.T) {
-	t.Parallel()
-
-	service := &fakeService{
-		ensureEnv: multipass.Environment{
-			InstanceName: "mp-lab",
-			GuestHostDir: "/guest/work",
-			GuestBinary:  "/guest/bin/frridge",
-			GuestWorkDir: "/guest/state",
-		},
-	}
-
-	cmd := newRootCommand(service)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.SetOut(&stdout)
-	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"ensure"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	output := stdout.String()
-	for _, want := range []string{"instance: mp-lab", "workspace: /guest/work", "binary: /guest/bin/frridge", "workdir: /guest/state"} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("output = %q, want substring %q", output, want)
-		}
-	}
 }
 
 func TestUpCommandRelativizesTopologyAgainstImplicitHostDir(t *testing.T) {

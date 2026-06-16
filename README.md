@@ -90,7 +90,6 @@ Available Commands:
   completion  Generate the autocompletion script for the specified shell
   console     Open vtysh or a shell inside a running guest-backed router container
   down        Remove containers and runtime networking inside the guest
-  ensure      Create or update the Multipass VM and guest-local frridge binary
   exec        Run an arbitrary command inside the guest workspace
   help        Help about any command
   ping        Run YAML-defined ping checks inside the guest
@@ -111,10 +110,13 @@ Flags:
 Use "frridge-mp [command] --help" for more information about a command.
 ```
 
+Every `frridge-mp` command auto-creates or updates the guest VM, mounts the
+requested host directory, and refreshes the guest-local `frridge` binary as
+needed.
+
 The common flow is:
 
 ```console
-$ frridge-mp ensure --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan
 $ frridge-mp up --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file lab.yaml
 $ frridge-mp ping --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file lab.yaml
 $ frridge-mp console --repo-dir ~/src/frridge --host-dir ../toy-evpn-vxlan --file lab.yaml rt1
@@ -288,7 +290,6 @@ Development
   clean            Remove local build artifacts
 
 Multipass
-  mp-launch        Ensure the Multipass VM and guest-local frridge binary exist
   mp-shell         Open a shell in the Multipass workspace
   mp-verify        Run the Multipass-backed smoke test
   mp-stop          Stop the Multipass VM

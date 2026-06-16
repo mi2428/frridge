@@ -143,7 +143,7 @@ func TestResolveRequestDefaultsAndSharedMount(t *testing.T) {
 	}
 }
 
-func TestManagerEnsureLaunchesAndTransfersBinary(t *testing.T) {
+func TestManagerPrepareLaunchesAndTransfersBinary(t *testing.T) {
 	t.Parallel()
 
 	repoDir := t.TempDir()
@@ -160,7 +160,7 @@ func TestManagerEnsureLaunchesAndTransfersBinary(t *testing.T) {
 	}
 	manager := NewManager(cli, builder)
 
-	env, err := manager.Ensure(context.Background(), Request{
+	env, err := manager.prepare(context.Background(), Request{
 		RepoDir: repoDir,
 		HostDir: hostDir,
 		Instance: Instance{
@@ -168,7 +168,7 @@ func TestManagerEnsureLaunchesAndTransfersBinary(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("Ensure() error = %v", err)
+		t.Fatalf("prepare() error = %v", err)
 	}
 
 	if len(cli.launched) != 1 {
@@ -253,7 +253,7 @@ func TestManagerFrridgeWrapsGuestBinaryAndWorkDir(t *testing.T) {
 	}
 }
 
-func TestManagerEnsureBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
+func TestManagerPrepareBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 	t.Parallel()
 
 	repoDir := t.TempDir()
@@ -277,14 +277,14 @@ func TestManagerEnsureBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 	}
 	manager := NewManager(cli, builder)
 
-	if _, err := manager.Ensure(context.Background(), Request{
+	if _, err := manager.prepare(context.Background(), Request{
 		RepoDir: repoDir,
 		HostDir: hostDir,
 		Instance: Instance{
 			Name: "mp-lab",
 		},
 	}); err != nil {
-		t.Fatalf("Ensure() error = %v", err)
+		t.Fatalf("prepare() error = %v", err)
 	}
 
 	found := false
@@ -301,7 +301,7 @@ func TestManagerEnsureBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("Ensure() did not run guest image bootstrap command: %#v", cli.execs)
+		t.Fatalf("prepare() did not run guest image bootstrap command: %#v", cli.execs)
 	}
 }
 

@@ -90,9 +90,9 @@ func newSmokeHarness(t *testing.T, ctx context.Context) *smokeHarness {
 		},
 	}
 
-	env, err := manager.Ensure(ctx, req)
+	env, err := manager.prepare(ctx, req)
 	if err != nil {
-		t.Fatalf("ensure multipass environment: %v", err)
+		t.Fatalf("prepare multipass environment: %v", err)
 	}
 
 	return &smokeHarness{
