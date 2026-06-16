@@ -22,6 +22,16 @@ routers:
            network 10.255.98.1/32 area 0.0.0.0
            passive-interface lo
           end
+      - kind: shell
+        run: |
+          set -e
+          for _ in $(seq 1 20); do
+            if ip route show 172.16.98.10/32 | grep -q 'proto ospf'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
 
   abr:
     loopbacks:

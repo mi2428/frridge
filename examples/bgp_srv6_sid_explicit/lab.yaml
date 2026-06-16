@@ -239,6 +239,10 @@ routers:
            exit-address-family
           end
           write memory
+      - kind: shell
+        run: |
+          set -e
+          sleep 10
 
   c11:
     commands:

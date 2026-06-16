@@ -36,6 +36,10 @@ routers:
             neighbor 10.0.85.2 route-reflector-client
            exit-address-family
           end
+      - kind: shell
+        run: |
+          set -e
+          sleep 5
 
   pe1:
     loopbacks:
@@ -85,7 +89,8 @@ routers:
             neighbor 10.0.85.1 activate
            exit-address-family
            address-family l2vpn evpn
-            neighbor 10.0.85.1 activate
+           neighbor 10.0.85.1 activate
+           advertise-all-vni
            exit-address-family
           exit
           router bgp 65000 vrf tenant
@@ -146,7 +151,8 @@ routers:
             neighbor 10.0.85.3 activate
            exit-address-family
            address-family l2vpn evpn
-            neighbor 10.0.85.3 activate
+           neighbor 10.0.85.3 activate
+           advertise-all-vni
            exit-address-family
           exit
           router bgp 65000 vrf tenant
