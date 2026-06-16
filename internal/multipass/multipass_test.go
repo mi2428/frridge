@@ -305,6 +305,54 @@ func TestManagerPrepareBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 	}
 }
 
+func TestManagerPrepareBootstrapsMPLSKernelSupport(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	hostDir := t.TempDir()
+	cli := &fakeCLI{
+		info: Info{
+			State:  "Running",
+			Mounts: make(map[string]string),
+		},
+		arch: "x86_64\n",
+	}
+	builder := &fakeBuilder{
+		result: BuildResult{
+			ID:   "digest-amd64",
+			Path: filepath.Join(t.TempDir(), "frridge"),
+		},
+	}
+	manager := NewManager(cli, builder)
+
+	if _, err := manager.prepare(context.Background(), Request{
+		RepoDir: repoDir,
+		HostDir: hostDir,
+		Instance: Instance{
+			Name: "mp-lab",
+		},
+	}); err != nil {
+		t.Fatalf("prepare() error = %v", err)
+	}
+
+	for _, spec := range cli.execs {
+		if len(spec.Command) < 3 || spec.Command[0] != "bash" || spec.Command[1] != "-lc" {
+			continue
+		}
+		script := spec.Command[2]
+		if strings.Contains(script, "linux-modules-extra-$(uname -r)") &&
+			strings.Contains(script, "/etc/modules-load.d/frridge-mp.conf") &&
+			strings.Contains(script, "modprobe") &&
+			strings.Contains(script, "mpls_router") &&
+			strings.Contains(script, "mpls_iptunnel") &&
+			strings.Contains(script, "vrf") {
+			return
+		}
+	}
+
+	t.Fatalf("prepare() did not run MPLS/VRF bootstrap command: %#v", cli.execs)
+}
+
 func TestMapGuestArch(t *testing.T) {
 	t.Parallel()
 
