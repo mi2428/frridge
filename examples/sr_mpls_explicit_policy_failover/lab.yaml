@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: seamless-mpls-multi-domain
+  name: sr-mpls-explicit-policy-failover
   workdir: .frridge
 
 routers:

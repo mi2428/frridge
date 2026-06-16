@@ -1,7 +1,8 @@
-# SR-MPLS BGP Color Policy
+# SR-MPLS Static Color Policy
 
-This example uses `pathd` to steer a loopback route across a four-router
-diamond with an color-selected segment list.
+This example uses `pathd` to steer a statically installed colored route across
+a four-router diamond with an explicit segment list. The color is attached with
+`ip route ... color`; there is no BGP color community in this lab.
 
 ## Topology
 

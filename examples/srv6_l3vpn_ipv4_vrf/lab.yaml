@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: srv6-l3vpn-end-dt4-dt6
+  name: srv6-l3vpn-ipv4-vrf
   workdir: .frridge
   defaults:
     sysctls:

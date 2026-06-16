@@ -1,7 +1,9 @@
-# BGP PIC Edge Failover (1 RR, 2 Edge Routers)
+# iBGP RR Convergence (1 RR, 2 Edge Routers)
 
 This example builds one route reflector and two iBGP clients.
 `lab.yaml` uses numbered IPv4 transit links, installs only the static routes needed to reach the BGP session loopbacks, and relies on the route reflector to exchange the client host subnets.
+It is a convergence observation lab around a route reflector; it does not
+configure BGP PIC edge.
 
 ## Topology
 

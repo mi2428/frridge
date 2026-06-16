@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: mpls-carriers-carrier
+  name: ebgp-option-c-multihop
   workdir: .frridge
 
 routers:

@@ -1,4 +1,4 @@
-# MPLS Carrier's Carrier (4 Routers)
+# eBGP Option C Multihop (4 Routers)
 
 This example splits the topology into `PE -> ASBR -> ASBR -> PE`.
 `lab.yaml` keeps the two ASBRs out of the service BGP session and forms the actual inter-AS eBGP adjacency directly between `pe1` and `pe2`. Because this lab is IP-only, the ASBRs also carry static routes for the PE loopbacks and service subnets.
@@ -35,13 +35,13 @@ This example splits the topology into `PE -> ASBR -> ASBR -> PE`.
     - `br20`: `10.20.30.1/24`
     - `host` netns: `10.20.30.12/24`, MAC `02:00:00:00:c0:12`
 
-### Carrier's Carrier Behavior
+### Option C Multihop Behavior
 
 - `pe1` and `pe2` form the service eBGP session directly between their loopbacks.
 - `asbr1` and `asbr2` do not participate in the service BGP control plane.
 - To keep this learning lab IP-only and pingable, the ASBRs carry static routes for both PE loopbacks and both service subnets.
 - The service routes are exchanged on the end-to-end multihop PE session instead of on any ASBR-facing BGP session.
-- This is the role-split learning version of option C. It intentionally focuses on PE-to-PE service peering rather than on a full MPLS VPN control plane.
+- This is the role-split learning version of option C. It intentionally focuses on PE-to-PE service peering rather than on a full MPLS VPN or carrier's-carrier control plane.
 
 ### Reachability
 

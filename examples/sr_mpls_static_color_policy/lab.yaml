@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: sr-mpls-bgp-color-policy
+  name: sr-mpls-static-color-policy
   workdir: .frridge
 
 routers:
