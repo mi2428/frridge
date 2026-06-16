@@ -1,0 +1,239 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: sr-mpls-bgp-color-policy
+  workdir: .frridge
+
+routers:
+  r1:
+    loopbacks:
+      - 10.255.83.1/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=100000
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r1
+          ip route 10.255.83.3/32 10.255.83.3 color 100
+          router isis CORE
+           net 49.0001.0000.0000.8301.00
+           is-type level-2-only
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-2
+           mpls-te on
+           mpls-te router-address 10.255.83.1
+           mpls-te export
+           segment-routing on
+           segment-routing global-block 16000 23999
+           segment-routing node-msd 8
+           segment-routing prefix 10.255.83.1/32 index 301
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          interface eth2
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          segment-routing
+           traffic-eng
+            mpls-te on
+            mpls-te import isis
+            segment-list R3-VIA-R2
+             index 10 mpls label 16302
+             index 20 mpls label 16303
+            exit
+            policy color 100 endpoint 10.255.83.3
+             name r3-via-r2
+             binding-sid 4000
+             candidate-path preference 100 name explicit-r2 explicit segment-list R3-VIA-R2
+            exit
+           exit
+          end
+
+  r2:
+    loopbacks:
+      - 10.255.83.2/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=100000
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r2
+          router isis CORE
+           net 49.0001.0000.0000.8302.00
+           is-type level-2-only
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-2
+           mpls-te on
+           mpls-te router-address 10.255.83.2
+           mpls-te export
+           segment-routing on
+           segment-routing global-block 16000 23999
+           segment-routing node-msd 8
+           segment-routing prefix 10.255.83.2/32 index 302
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          interface eth2
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          end
+
+  r3:
+    loopbacks:
+      - 10.255.83.3/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=100000
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r3
+          ip route 10.255.83.1/32 10.255.83.1 color 200
+          router isis CORE
+           net 49.0001.0000.0000.8303.00
+           is-type level-2-only
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-2
+           mpls-te on
+           mpls-te router-address 10.255.83.3
+           mpls-te export
+           segment-routing on
+           segment-routing global-block 16000 23999
+           segment-routing node-msd 8
+           segment-routing prefix 10.255.83.3/32 index 303
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          interface eth2
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          segment-routing
+           traffic-eng
+            mpls-te on
+            mpls-te import isis
+            segment-list R1-VIA-R2
+             index 10 mpls label 16302
+             index 20 mpls label 16301
+            exit
+            policy color 200 endpoint 10.255.83.1
+             name r1-via-r2
+             binding-sid 4001
+             candidate-path preference 100 name explicit-r2 explicit segment-list R1-VIA-R2
+            exit
+           exit
+          end
+
+  r4:
+    loopbacks:
+      - 10.255.83.4/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=100000
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname r4
+          router isis CORE
+           net 49.0001.0000.0000.8304.00
+           is-type level-2-only
+           metric-style wide
+           topology ipv4-unicast
+           redistribute ipv4 connected level-2
+           mpls-te on
+           mpls-te router-address 10.255.83.4
+           mpls-te export
+           segment-routing on
+           segment-routing global-block 16000 23999
+           segment-routing node-msd 8
+           segment-routing prefix 10.255.83.4/32 index 304
+          exit
+          interface lo
+           ip router isis CORE
+           isis passive
+          exit
+          interface eth1
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          interface eth2
+           ip router isis CORE
+           isis network point-to-point
+          exit
+          end
+
+links:
+  - name: r1-r2
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1, ipv4: 10.0.83.0/31 }
+      - { router: r2, ifname: eth1, ipv4: 10.0.83.1/31 }
+
+  - name: r2-r3
+    type: p2p
+    members:
+      - { router: r2, ifname: eth2, ipv4: 10.0.83.2/31 }
+      - { router: r3, ifname: eth1, ipv4: 10.0.83.3/31 }
+
+  - name: r1-r4
+    type: p2p
+    members:
+      - { router: r1, ifname: eth2, ipv4: 10.0.83.4/31 }
+      - { router: r4, ifname: eth1, ipv4: 10.0.83.5/31 }
+
+  - name: r4-r3
+    type: p2p
+    members:
+      - { router: r4, ifname: eth2, ipv4: 10.0.83.6/31 }
+      - { router: r3, ifname: eth2, ipv4: 10.0.83.7/31 }
+
+pings:
+  - name: r1-to-r3-loopback
+    from:
+      router: r1
+    to: 10.255.83.3
