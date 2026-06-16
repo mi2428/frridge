@@ -1,0 +1,181 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-type5-simple
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.85.100/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.85.100
+           bgp cluster-id 10.255.85.100
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.85.0 remote-as 65000
+           neighbor 10.0.85.2 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.85.100/32
+            neighbor 10.0.85.0 activate
+            neighbor 10.0.85.0 route-reflector-client
+            neighbor 10.0.85.0 next-hop-self force
+            neighbor 10.0.85.2 activate
+            neighbor 10.0.85.2 route-reflector-client
+            neighbor 10.0.85.2 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.85.0 activate
+            neighbor 10.0.85.0 route-reflector-client
+            neighbor 10.0.85.2 activate
+            neighbor 10.0.85.2 route-reflector-client
+           exit-address-family
+          end
+
+  pe1:
+    loopbacks:
+      - 10.255.85.11/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link add tenant type vrf table 1100
+          ip link set tenant up
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:00:85:51
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.85.11 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master tenant
+          ip addr add 10.10.85.1/24 dev lan0
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip addr add 10.10.85.11/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ip route replace default via 10.10.85.1
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname pe1
+          router bgp 65000
+           bgp router-id 10.255.85.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.85.1 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.85.11/32
+            neighbor 10.0.85.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.85.1 activate
+           exit-address-family
+          exit
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.85.11
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.85.12/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link add tenant type vrf table 1200
+          ip link set tenant up
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:00:85:52
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.85.12 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master tenant
+          ip addr add 10.20.85.1/24 dev lan0
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip addr add 10.20.85.11/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ip route replace default via 10.20.85.1
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname pe2
+          router bgp 65000
+           bgp router-id 10.255.85.12
+           no bgp default ipv4-unicast
+           neighbor 10.0.85.3 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.85.12/32
+            neighbor 10.0.85.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.85.3 activate
+           exit-address-family
+          exit
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.85.12
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+links:
+  - name: rr-pe1
+    type: p2p
+    members:
+      - router: pe1
+        ifname: eth1
+        ipv4: 10.0.85.0/31
+      - router: rr
+        ifname: eth1
+        ipv4: 10.0.85.1/31
+
+  - name: rr-pe2
+    type: p2p
+    members:
+      - router: pe2
+        ifname: eth1
+        ipv4: 10.0.85.2/31
+      - router: rr
+        ifname: eth2
+        ipv4: 10.0.85.3/31
+
+pings:
+  - name: pe1-host-to-pe2-host
+    from:
+      router: pe1
+      namespace: host
+      address: 10.10.85.11
+    to: 10.20.85.11
