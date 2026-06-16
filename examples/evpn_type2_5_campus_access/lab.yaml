@@ -1,0 +1,356 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-type2-5-campus-access
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.95.100/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.95.100
+           bgp cluster-id 10.255.95.100
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.95.0 remote-as 65000
+           neighbor 10.0.95.2 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.95.100/32
+            neighbor 10.0.95.0 activate
+            neighbor 10.0.95.0 route-reflector-client
+            neighbor 10.0.95.0 next-hop-self force
+            neighbor 10.0.95.2 activate
+            neighbor 10.0.95.2 route-reflector-client
+            neighbor 10.0.95.2 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.95.0 activate
+            neighbor 10.0.95.0 route-reflector-client
+            neighbor 10.0.95.2 activate
+            neighbor 10.0.95.2 route-reflector-client
+           exit-address-family
+          end
+
+  lf1:
+    loopbacks:
+      - 10.255.95.11/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link add tenant type vrf table 1100
+          ip link set tenant up
+
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:95:50:11
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.95.11 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+
+          ip link add br10 type bridge
+          ip link set br10 master tenant addrgenmode none
+          ip link set br10 address 02:00:00:10:10:01
+          ip addr add 10.10.10.1/24 dev br10
+          ip link add vxlan100 type vxlan id 100 local 10.255.95.11 dstport 4789 nolearning
+          ip link set vxlan100 master br10 addrgenmode none
+          ip link set vxlan100 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan100 up
+          ip link set eth2 master br10
+          ip link set eth2 up
+          bridge fdb replace 02:00:00:10:10:01 dev br10 self local
+          ip link set br10 up
+
+          ip link set eth3 master tenant
+          ip addr add 10.10.20.1/24 dev eth3
+          ip link set eth3 up
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname lf1
+          router bgp 65000
+           bgp router-id 10.255.95.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.95.1 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.95.11/32
+            neighbor 10.0.95.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.95.1 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          ip prefix-list CAMPUS-T5 permit 10.10.20.0/24
+          route-map CAMPUS-T5 permit 10
+           match ip address prefix-list CAMPUS-T5
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.95.11
+           address-family ipv4 unicast
+            redistribute connected route-map CAMPUS-T5
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  lf2:
+    loopbacks:
+      - 10.255.95.12/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link add tenant type vrf table 1200
+          ip link set tenant up
+
+          ip link add br5000 type bridge
+          ip link set br5000 master tenant addrgenmode none
+          ip link set br5000 addr 02:00:00:95:50:12
+          ip link add vxlan5000 type vxlan id 5000 local 10.255.95.12 dstport 4789 nolearning
+          ip link set vxlan5000 master br5000 addrgenmode none
+          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan5000 up
+          ip link set br5000 up
+
+          ip link add br10 type bridge
+          ip link set br10 master tenant addrgenmode none
+          ip link set br10 address 02:00:00:10:10:01
+          ip addr add 10.10.10.1/24 dev br10
+          ip link add vxlan100 type vxlan id 100 local 10.255.95.12 dstport 4789 nolearning
+          ip link set vxlan100 master br10 addrgenmode none
+          ip link set vxlan100 type bridge_slave neigh_suppress on learning off
+          ip link set vxlan100 up
+          ip link set eth2 master br10
+          ip link set eth2 up
+          bridge fdb replace 02:00:00:10:10:01 dev br10 self local
+          ip link set br10 up
+
+          ip link set eth3 master tenant
+          ip addr add 10.10.30.1/24 dev eth3
+          ip link set eth3 up
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname lf2
+          router bgp 65000
+           bgp router-id 10.255.95.12
+           no bgp default ipv4-unicast
+           neighbor 10.0.95.3 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.95.12/32
+            neighbor 10.0.95.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.95.3 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          ip prefix-list CAMPUS-T5 permit 10.10.30.0/24
+          route-map CAMPUS-T5 permit 10
+           match ip address prefix-list CAMPUS-T5
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.95.12
+           address-family ipv4 unicast
+            redistribute connected route-map CAMPUS-T5
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  student11:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.10.1
+
+  student12:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.10.1
+
+  student21:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.10.1
+
+  student22:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.10.1
+
+  library11:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.20.1
+
+  library12:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.20.1
+
+  dns21:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.30.1
+
+  dns22:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.30.1
+
+links:
+  - name: rr-lf1
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth1
+        ipv4: 10.0.95.0/31
+      - router: rr
+        ifname: eth1
+        ipv4: 10.0.95.1/31
+
+  - name: rr-lf2
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth1
+        ipv4: 10.0.95.2/31
+      - router: rr
+        ifname: eth2
+        ipv4: 10.0.95.3/31
+
+  - name: lf1-students
+    type: bridge
+    members:
+      - router: lf1
+        ifname: eth2
+      - router: student11
+        ifname: eth1
+        ipv4: 10.10.10.11/24
+        mac: 02:00:00:10:10:11
+      - router: student12
+        ifname: eth1
+        ipv4: 10.10.10.12/24
+        mac: 02:00:00:10:10:12
+
+  - name: lf2-students
+    type: bridge
+    members:
+      - router: lf2
+        ifname: eth2
+      - router: student21
+        ifname: eth1
+        ipv4: 10.10.10.21/24
+        mac: 02:00:00:10:10:21
+      - router: student22
+        ifname: eth1
+        ipv4: 10.10.10.22/24
+        mac: 02:00:00:10:10:22
+
+  - name: lf1-services
+    type: bridge
+    members:
+      - router: lf1
+        ifname: eth3
+      - router: library11
+        ifname: eth1
+        ipv4: 10.10.20.11/24
+        mac: 02:00:00:10:20:11
+      - router: library12
+        ifname: eth1
+        ipv4: 10.10.20.12/24
+        mac: 02:00:00:10:20:12
+
+  - name: lf2-services
+    type: bridge
+    members:
+      - router: lf2
+        ifname: eth3
+      - router: dns21
+        ifname: eth1
+        ipv4: 10.10.30.11/24
+        mac: 02:00:00:10:30:11
+      - router: dns22
+        ifname: eth1
+        ipv4: 10.10.30.12/24
+        mac: 02:00:00:10:30:12
+
+pings:
+  - name: student11-to-student21
+    from:
+      router: student11
+      address: 10.10.10.11
+    to: 10.10.10.21
+
+  - name: student11-to-dns21
+    from:
+      router: student11
+      address: 10.10.10.11
+    to: 10.10.30.11
+
+  - name: student22-to-library11
+    from:
+      router: student22
+      address: 10.10.10.22
+    to: 10.10.20.11
+
+  - name: library12-to-dns22
+    from:
+      router: library12
+      address: 10.10.20.12
+    to: 10.10.30.12
