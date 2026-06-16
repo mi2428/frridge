@@ -13,6 +13,11 @@ routers:
       - 10.255.80.100/32
       - 2001:db8:94::100/128
     commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:94:1::1/127 dev eth1
+          ip -6 addr replace 2001:db8:94:2::1/127 dev eth2
       - kind: vtysh
         run: |
           configure terminal
@@ -90,7 +95,10 @@ routers:
               addresses: [10.10.80.11/24]
     commands:
       - kind: shell
-        run: ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:94:1::0/127 dev eth1
+          ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
       - kind: vtysh
         run: |
           configure terminal
@@ -154,7 +162,10 @@ routers:
               addresses: [10.10.80.12/24]
     commands:
       - kind: shell
-        run: ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:94:2::0/127 dev eth1
+          ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
       - kind: vtysh
         run: |
           configure terminal
@@ -206,11 +217,9 @@ links:
       - router: pe1
         ifname: eth1
         ipv4: 10.0.80.0/31
-        ipv6: 2001:db8:94:1::0/127
       - router: rr
         ifname: eth1
         ipv4: 10.0.80.1/31
-        ipv6: 2001:db8:94:1::1/127
 
   - name: rr-pe2
     type: p2p
@@ -218,11 +227,9 @@ links:
       - router: pe2
         ifname: eth1
         ipv4: 10.0.80.2/31
-        ipv6: 2001:db8:94:2::0/127
       - router: rr
         ifname: eth2
         ipv4: 10.0.80.3/31
-        ipv6: 2001:db8:94:2::1/127
 
 pings:
   - name: pe1-host-to-pe2-host
