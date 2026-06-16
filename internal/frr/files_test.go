@@ -75,6 +75,7 @@ func TestDefaultDaemonsMatchesFRRContainerExpectations(t *testing.T) {
 		"ospf6d=yes",
 		"isisd=yes",
 		"staticd=yes",
+		"pathd=yes",
 		"vtysh_enable=yes",
 		`zebra_options="  -A 127.0.0.1 -s 90000000"`,
 		`bgpd_options="   -A 127.0.0.1"`,

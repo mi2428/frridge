@@ -18,6 +18,7 @@ var defaultEnabledDaemons = []string{
 	"ospf6d",
 	"isisd",
 	"staticd",
+	"pathd",
 }
 
 // EnabledDaemons returns the FRR daemons that generated labs enable by
@@ -126,7 +127,7 @@ pbrd=no
 staticd=%s
 bfdd=no
 fabricd=no
-pathd=no
+pathd=%s
 vrrpd=no
 mgmtd=no
 
@@ -153,7 +154,7 @@ vrrpd_options="  -A 127.0.0.1"
 pathd_options="  -A 127.0.0.1"
 
 frr_profile="datacenter"
-	`, "\n"), yn("zebra"), yn("bgpd"), yn("ospfd"), yn("ospf6d"), yn("isisd"), yn("staticd"))
+	`, "\n"), yn("zebra"), yn("bgpd"), yn("ospfd"), yn("ospf6d"), yn("isisd"), yn("staticd"), yn("pathd"))
 }
 
 // DefaultVtyshConf enables integrated configuration mode for generated labs.
