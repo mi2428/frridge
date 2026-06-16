@@ -2,6 +2,7 @@ package multipass
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"os"
 	"path"
@@ -73,7 +74,7 @@ func (f *fakeCLI) Mount(_ context.Context, source, target string) error {
 	}
 	parts := strings.SplitN(target, ":", 2)
 	if len(parts) != 2 {
-		panic("unexpected mount target")
+		return fmt.Errorf("unexpected mount target %q", target)
 	}
 	f.info.Mounts[parts[1]] = source
 	return nil
@@ -115,6 +116,17 @@ func (b *fakeBuilder) Build(_ context.Context, repoDir, goarch string) (BuildRes
 	b.repo = repoDir
 	b.arch = goarch
 	return b.result, nil
+}
+
+func bashScript(spec ExecSpec) (string, bool) {
+	switch {
+	case len(spec.Command) >= 3 && spec.Command[0] == "bash" && spec.Command[1] == "-lc":
+		return spec.Command[2], true
+	case len(spec.Command) >= 4 && spec.Command[0] == "sudo" && spec.Command[1] == "bash" && spec.Command[2] == "-lc":
+		return spec.Command[3], true
+	default:
+		return "", false
+	}
 }
 
 func TestResolveRequestDefaultsAndSharedMount(t *testing.T) {
@@ -292,10 +304,8 @@ func TestManagerPrepareBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 		if spec.Dir != path.Join(defaultGuestMountRoot, shortHash(repoDir)) {
 			continue
 		}
-		if len(spec.Command) < 3 {
-			continue
-		}
-		if spec.Command[0] == "bash" && spec.Command[1] == "-lc" && strings.Contains(spec.Command[2], "docker build -t \"$1\" .") {
+		script, ok := bashScript(spec)
+		if ok && strings.Contains(script, "docker build -t \"$1\" .") {
 			found = true
 			break
 		}
@@ -336,10 +346,10 @@ func TestManagerPrepareBootstrapsMPLSKernelSupport(t *testing.T) {
 	}
 
 	for _, spec := range cli.execs {
-		if len(spec.Command) < 3 || spec.Command[0] != "bash" || spec.Command[1] != "-lc" {
+		script, ok := bashScript(spec)
+		if !ok {
 			continue
 		}
-		script := spec.Command[2]
 		if strings.Contains(script, "linux-modules-extra-$(uname -r)") &&
 			strings.Contains(script, "/etc/modules-load.d/frridge-mp.conf") &&
 			strings.Contains(script, "modprobe") &&
@@ -351,6 +361,49 @@ func TestManagerPrepareBootstrapsMPLSKernelSupport(t *testing.T) {
 	}
 
 	t.Fatalf("prepare() did not run MPLS/VRF bootstrap command: %#v", cli.execs)
+}
+
+func TestManagerPrepareBootstrapsMakeForGuestWorkflows(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	hostDir := t.TempDir()
+	cli := &fakeCLI{
+		info: Info{
+			State:  "Running",
+			Mounts: make(map[string]string),
+		},
+		arch: "x86_64\n",
+	}
+	builder := &fakeBuilder{
+		result: BuildResult{
+			ID:   "digest-amd64",
+			Path: filepath.Join(t.TempDir(), "frridge"),
+		},
+	}
+	manager := NewManager(cli, builder)
+
+	if _, err := manager.prepare(context.Background(), Request{
+		RepoDir: repoDir,
+		HostDir: hostDir,
+		Instance: Instance{
+			Name: "mp-lab",
+		},
+	}); err != nil {
+		t.Fatalf("prepare() error = %v", err)
+	}
+
+	for _, spec := range cli.execs {
+		script, ok := bashScript(spec)
+		if !ok {
+			continue
+		}
+		if strings.Contains(script, "command -v make") {
+			return
+		}
+	}
+
+	t.Fatalf("prepare() did not ensure guest make availability: %#v", cli.execs)
 }
 
 func TestMapGuestArch(t *testing.T) {

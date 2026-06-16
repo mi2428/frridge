@@ -1,0 +1,8 @@
+#cloud-config
+write_files:
+  - path: /usr/local/lib/frridge-mp/guest-bootstrap.sh
+    permissions: "0755"
+    content: |
+{{ indent "      " .GuestBootstrap }}
+runcmd:
+  - [/usr/local/lib/frridge-mp/guest-bootstrap.sh]

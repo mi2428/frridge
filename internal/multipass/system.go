@@ -68,6 +68,12 @@ func (c *systemCLI) Info(ctx context.Context, instance string) (Info, error) {
 }
 
 func (c *systemCLI) Launch(ctx context.Context, spec Instance) error {
+	cloudInitPath, cleanup, err := writeLaunchCloudInitFile()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	args := []string{
 		"launch",
 		spec.Image,
@@ -75,6 +81,7 @@ func (c *systemCLI) Launch(ctx context.Context, spec Instance) error {
 		"--cpus", fmt.Sprintf("%d", spec.CPUs),
 		"--memory", spec.Memory,
 		"--disk", spec.Disk,
+		"--cloud-init", cloudInitPath,
 	}
 	_, stderr, err := c.output(ctx, args...)
 	if err != nil {

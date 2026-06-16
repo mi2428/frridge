@@ -145,8 +145,8 @@ func NewDefault() (*Manager, error) {
 }
 
 // prepare makes sure the VM exists, the requested host directories are
-// mounted, the guest dependencies are installed, and the Linux frridge binary
-// is present.
+// mounted, any missing guest dependencies are repaired, and the Linux frridge
+// binary is present.
 func (m *Manager) prepare(ctx context.Context, req Request) (Environment, error) {
 	resolved, err := resolveRequest(req)
 	if err != nil {
@@ -362,33 +362,12 @@ func (m *Manager) ensureGuestDirs(ctx context.Context, env Environment) error {
 	})
 }
 
+// bootstrapGuest is a repair path for VMs that predate the current cloud-init
+// payload or drifted away from it. It executes the same baseline script that a
+// fresh launch receives through cloud-init.
 func (m *Manager) bootstrapGuest(ctx context.Context, env Environment) error {
-	const script = `
-set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-mods_pkg="linux-modules-extra-$(uname -r)"
-packages=()
-if ! command -v docker >/dev/null 2>&1; then
-	packages+=(docker.io ca-certificates)
-fi
-if apt-cache show "$mods_pkg" >/dev/null 2>&1 && ! dpkg-query -W -f='${Status}' "$mods_pkg" 2>/dev/null | grep -q '^install ok installed$'; then
-	packages+=("$mods_pkg")
-fi
-if ((${#packages[@]})); then
-	sudo apt-get update
-	sudo apt-get install -y "${packages[@]}"
-fi
-sudo systemctl enable --now docker
-printf '%s\n' vrf mpls_router mpls_iptunnel | sudo tee /etc/modules-load.d/frridge-mp.conf >/dev/null
-while read -r module; do
-	[ -n "$module" ] || continue
-	sudo modprobe "$module" 2>/dev/null || true
-done < /etc/modules-load.d/frridge-mp.conf
-mkdir -p "$HOME/.local/share/frridge-mp"
-	`
-
 	return m.cli.Exec(ctx, env.InstanceName, ExecSpec{
-		Command: []string{"bash", "-lc", strings.TrimSpace(script)},
+		Command: []string{"sudo", "bash", "-lc", guestBootstrapScript()},
 	})
 }
 
