@@ -1,7 +1,7 @@
 # eBGP Inter-AS Option B (2 Routers)
 
 This example collapses each domain into one border router and models option B as direct eBGP exchange across the inter-AS link.
-`lab.yaml` uses `eth1` for the border peering and carries each side's local LAN prefix directly in IPv4 unicast BGP.
+`lab.yaml` uses `eth1` for the border peering, and `linux.bridges` builds each side's local LAN before those prefixes are exchanged in IPv4 unicast BGP.
 
 ## Topology
 

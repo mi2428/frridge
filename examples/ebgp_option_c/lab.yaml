@@ -3,36 +3,26 @@ apiVersion: frridge/v1alpha1
 lab:
   name: ebgp-inter-as-c
   workdir: .frridge
-  defaults:
-    image: frridge-frr:latest
-    privileged: true
-    sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv4.conf.all.rp_filter: "0"
 
 routers:
   as1:
     loopbacks:
       - 10.255.2.1/32
+    linux:
+      routes:
+        - to: 10.255.2.2/32
+          via: 192.0.2.1
+          dev: eth1
+      bridges:
+        - name: br10
+          addresses: [10.10.30.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:c0:11
+              addresses: [10.10.30.11/24]
+              defaultVia: 10.10.30.1
     commands:
-      - kind: shell
-        run: |
-          set -eu
-          ip route replace 10.255.2.2/32 via 192.0.2.1 dev eth1
-          ip link add name br10 type bridge
-          ip addr add 10.10.30.1/24 dev br10
-          ip link set dev br10 up
-          ip netns add host
-          ip link add name veth-host type veth peer name veth-netns
-          ip link set dev veth-host master br10
-          ip link set dev veth-host up
-          ip link set dev veth-netns netns host
-          ip netns exec host ip link set dev lo up
-          ip netns exec host ip link set dev veth-netns name eth0
-          ip netns exec host ip link set dev eth0 address 02:00:00:00:c0:11
-          ip netns exec host ip addr add 10.10.30.11/24 dev eth0
-          ip netns exec host ip link set dev eth0 up
-          ip netns exec host ip route replace default via 10.10.30.1
       - kind: vtysh
         run: |
           configure terminal
@@ -52,25 +42,21 @@ routers:
   as2:
     loopbacks:
       - 10.255.2.2/32
+    linux:
+      routes:
+        - to: 10.255.2.1/32
+          via: 192.0.2.0
+          dev: eth1
+      bridges:
+        - name: br20
+          addresses: [10.20.30.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:c0:12
+              addresses: [10.20.30.12/24]
+              defaultVia: 10.20.30.1
     commands:
-      - kind: shell
-        run: |
-          set -eu
-          ip route replace 10.255.2.1/32 via 192.0.2.0 dev eth1
-          ip link add name br20 type bridge
-          ip addr add 10.20.30.1/24 dev br20
-          ip link set dev br20 up
-          ip netns add host
-          ip link add name veth-host type veth peer name veth-netns
-          ip link set dev veth-host master br20
-          ip link set dev veth-host up
-          ip link set dev veth-netns netns host
-          ip netns exec host ip link set dev lo up
-          ip netns exec host ip link set dev veth-netns name eth0
-          ip netns exec host ip link set dev eth0 address 02:00:00:00:c0:12
-          ip netns exec host ip addr add 10.20.30.12/24 dev eth0
-          ip netns exec host ip link set dev eth0 up
-          ip netns exec host ip route replace default via 10.20.30.1
       - kind: vtysh
         run: |
           configure terminal

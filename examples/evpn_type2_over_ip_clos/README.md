@@ -1,7 +1,7 @@
 # EVPN Type-2 over IP Clos
 
 This example builds a 2-spine / 3-leaf IP Clos underlay and stretches one L2 segment across the three leaves with EVPN type-2 over VXLAN.
-`lab.yaml` seeds the underlay, configures `sp1` and `sp2` as route reflectors, creates `br10` and `vxlan100` on each leaf, and places one `host` namespace behind each leaf on `10.10.10.0/24`.
+`lab.yaml` seeds the underlay, configures `sp1` and `sp2` as route reflectors, uses `linux.bridges` to create `br10`, `vxlan100`, and one `host` namespace behind each leaf, and keeps only a one-shot shell probe to trigger local MAC learning.
 
 ## Topology
 

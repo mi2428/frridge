@@ -69,7 +69,7 @@ $ sudo frridge console rt1 -f lab.yaml --shell
 $ sudo frridge down -f lab.yaml --purge
 ```
 
-`up` creates containers, wires links, applies optional shell commands, and runs first-boot `vtysh` seed commands.
+`up` creates containers, wires links, applies optional `linux:` dataplane objects, runs any remaining shell escape hatches, and then applies first-boot `vtysh` seed commands.
 `ping` runs the named checks from top-level `pings:` and prints the underlying `ping(8)` output unchanged.
 `console` opens `vtysh` by default.
 `down --purge` also removes generated lab files under `lab.workdir`.
@@ -136,23 +136,28 @@ This is the supported `frridge` YAML surface. The comments are the contract.
 # Required schema version. This is the only version supported today.
 apiVersion: frridge/v1alpha1     # required; the only schema version supported today
 
-# Lab-wide metadata, runtime state location, and router defaults.
+# Lab-wide metadata, runtime state location, and optional router-default overrides.
+# When omitted, frridge fills in:
+#   image: frridge-frr:latest
+#   privileged: true
+#   sysctls:
+#     net.ipv4.ip_forward: "1"
+#     net.ipv4.conf.all.rp_filter: "0"
 lab:
   name: clos-manual              # required; used in container names and generated state paths
   workdir: .frridge              # optional; defaults to .frridge relative to this YAML file
-  defaults:
-    image: frridge-frr:latest    # optional here, but every router must end up with an image
-    privileged: true             # optional; defaults to true when omitted everywhere
-    sysctls:                     # optional; merged into every router, router values win on conflict
-      net.ipv4.ip_forward: "1"
-      net.ipv4.conf.all.rp_filter: "0"
+  defaults:                      # optional; overrides the built-in router defaults above
+    image: frrouting/frr:v10.6.1 # optional; use this when the whole lab wants a different image
+    privileged: false            # optional; router-local values still win if set
+    sysctls:                     # optional; merged onto the built-ins, then merged with router sysctls
+      net.ipv4.conf.all.rp_filter: "2"
 
 # Router definitions. Each router becomes one container.
 routers:
   rt1:
     hostname: spine1             # optional; defaults to the router key (rt1 here)
-    image: frrouting/frr:v10.6.1 # optional router-local override for lab.defaults.image
-    privileged: true             # optional router-local override for lab.defaults.privileged
+    image: frrouting/frr:v10.6.1 # optional router-local override for lab.defaults.image or the built-in image
+    privileged: true             # optional router-local override for lab.defaults.privileged or the built-in true
     env:                         # optional container environment variables
       ROLE: spine
     loopbacks:                   # optional; each value must be valid CIDR
@@ -162,13 +167,32 @@ routers:
       - source: ./shared/rt1     # source is relative to this YAML file unless already absolute
         target: /lab             # target must be an absolute path inside the container
         readOnly: false          # optional; defaults to false
-    sysctls:                     # optional router-local sysctls merged with lab.defaults.sysctls
+    sysctls:                     # optional router-local sysctls merged after built-ins and lab.defaults.sysctls
       net.ipv4.conf.eth1.rp_filter: "0"
+    linux:                       # optional router-local Linux dataplane objects built after links and loopbacks
+      routes:
+        - to: 10.255.0.2/32      # optional static routes in the router namespace
+          via: 192.0.2.1         # optional; set via, dev, or both
+          dev: eth1
+      bridges:
+        - name: br10             # optional Linux bridge device
+          addresses: [10.10.10.1/24]
+          interfaces: [eth2]     # optional existing router interfaces enslaved to the bridge
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.0.1
+              nolearning: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:10:11
+              addresses: [10.10.10.11/24]
+              defaultVia: 10.10.10.1
     commands:                    # optional post-link startup commands
-      - kind: shell              # shell commands run on every `frridge up`
+      - kind: shell              # shell is the escape hatch; it runs on every `frridge up` after `linux:`
         run: |
-          ip route replace 10.255.0.2/32 via 192.0.2.1 dev eth1
-          echo seeded-from-shell > /lab/provisioned.txt
+          ip netns exec host ping -c 1 -W 1 10.10.10.254 >/dev/null 2>&1 || true
       - kind: vtysh              # vtysh commands run once, then persist in /etc/frr/frr.conf
         run: |
           configure terminal
@@ -187,7 +211,7 @@ routers:
            bgp router-id 10.255.0.2
            no bgp default ipv4-unicast
 
-  host1: {}                    # empty router entries are valid and inherit lab.defaults
+  host1: {}                    # empty router entries are valid and inherit the built-ins plus any lab.defaults
 
 # Link definitions. Use p2p for point-to-point links and bridge for shared segments.
 links:
@@ -234,11 +258,10 @@ After `up`, enter routers with `frridge console <router>` and configure them by 
 # routing config yourself with `frridge console <router>`.
 apiVersion: frridge/v1alpha1
 
-# Lab metadata and default image.
+# Lab metadata only. The built-in image/sysctl/privileged defaults are enough
+# for a plain manual-routing lab.
 lab:
   name: clos-manual
-  defaults:
-    image: frridge-frr:latest
 
 # Empty router entries are enough when you want to configure everything by hand.
 routers:

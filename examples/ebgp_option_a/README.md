@@ -1,7 +1,7 @@
 # eBGP Inter-AS Option A (2 Routers)
 
 This example collapses each domain into one border router and models option A as a per-service handoff.
-`lab.yaml` keeps a plain eBGP session on `eth1`, but the tenant segment itself is stitched through a dedicated interconnect on `eth2`.
+`lab.yaml` keeps a plain eBGP session on `eth1`, while `linux.bridges` stitches the tenant segment through a dedicated interconnect on `eth2`.
 
 ## Topology
 
@@ -30,7 +30,7 @@ This example collapses each domain into one border router and models option A as
 ### Inter-AS Behavior
 
 - The ASBRs form a plain eBGP session on `eth1`.
-- The actual tenant segment is handed off directly on `eth2`.
+- The actual tenant segment is handed off directly on `eth2`, which `frridge` auto-attaches to `br10`.
 - This is the collapsed two-router version of "per-service border interconnect".
 
 ### Reachability

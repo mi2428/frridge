@@ -5,19 +5,17 @@ lab:
   workdir: .frridge
   defaults:
     image: frrouting/frr:v8.4.1
-    privileged: true
-    sysctls:
-      net.ipv4.ip_forward: "1"
-      net.ipv4.conf.all.rp_filter: "0"
 
 routers:
   rt1:
     loopbacks:
       - 10.255.0.1/32
+    linux:
+      routes:
+        - to: 10.255.0.2/32
+          via: 192.0.2.1
+          dev: eth1
     commands:
-      - kind: shell
-        run: |
-          ip route replace 10.255.0.2/32 via 192.0.2.1 dev eth1
       - kind: vtysh
         run: |
           configure terminal
@@ -30,10 +28,12 @@ routers:
   rt2:
     loopbacks:
       - 10.255.0.2/32
+    linux:
+      routes:
+        - to: 10.255.0.1/32
+          via: 192.0.2.0
+          dev: eth1
     commands:
-      - kind: shell
-        run: |
-          ip route replace 10.255.0.1/32 via 192.0.2.0 dev eth1
       - kind: vtysh
         run: |
           configure terminal

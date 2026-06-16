@@ -22,6 +22,11 @@ const (
 	APIVersion = "frridge/v1alpha1"
 	// DefaultWorkDir is used when lab.workdir is omitted in the topology.
 	DefaultWorkDir = ".frridge"
+	// DefaultRouterImage is used when both router.image and lab.defaults.image
+	// are omitted.
+	DefaultRouterImage = "frridge-frr:latest"
+	// DefaultRouterPrivileged is used when privileged is omitted everywhere.
+	DefaultRouterPrivileged = true
 	// WorkDirOverrideEnv lets wrappers such as frridge-mp move generated lab
 	// state onto a guest-local filesystem without rewriting the topology file.
 	WorkDirOverrideEnv = "FRRIDGE_WORKDIR_OVERRIDE"
@@ -65,6 +70,7 @@ type Router struct {
 	Loopbacks  []string          `yaml:"loopbacks" json:"loopbacks,omitempty"`
 	Mounts     []Mount           `yaml:"mounts" json:"mounts,omitempty"`
 	Sysctls    map[string]string `yaml:"sysctls" json:"sysctls,omitempty"`
+	Linux      Linux             `yaml:"linux" json:"linux"`
 	Commands   []Command         `yaml:"commands" json:"commands,omitempty"`
 }
 
@@ -79,6 +85,47 @@ type Mount struct {
 type Command struct {
 	Kind string `yaml:"kind" json:"kind"`
 	Run  string `yaml:"run" json:"run"`
+}
+
+// Linux describes router-local Linux dataplane objects that frridge can build
+// automatically after interfaces and loopbacks exist.
+type Linux struct {
+	Routes  []Route  `yaml:"routes" json:"routes,omitempty"`
+	Bridges []Bridge `yaml:"bridges" json:"bridges,omitempty"`
+}
+
+// Route installs one static route in the router's default namespace.
+type Route struct {
+	To  string `yaml:"to" json:"to"`
+	Via string `yaml:"via" json:"via,omitempty"`
+	Dev string `yaml:"dev" json:"dev,omitempty"`
+}
+
+// Bridge describes one bridge device and its attached Linux endpoints.
+type Bridge struct {
+	Name       string      `yaml:"name" json:"name"`
+	Addresses  []string    `yaml:"addresses" json:"addresses,omitempty"`
+	Interfaces []string    `yaml:"interfaces" json:"interfaces,omitempty"`
+	VXLANS     []VXLAN     `yaml:"vxlans" json:"vxlans,omitempty"`
+	Namespaces []Namespace `yaml:"namespaces" json:"namespaces,omitempty"`
+}
+
+// VXLAN describes one VXLAN device enslaved to a bridge.
+type VXLAN struct {
+	Name       string `yaml:"name" json:"name"`
+	VNI        int    `yaml:"vni" json:"vni"`
+	Local      string `yaml:"local" json:"local,omitempty"`
+	DstPort    int    `yaml:"dstport" json:"dstport,omitempty"`
+	NoLearning bool   `yaml:"nolearning" json:"nolearning,omitempty"`
+}
+
+// Namespace describes one veth-backed Linux namespace attached to a bridge.
+type Namespace struct {
+	Name       string   `yaml:"name" json:"name"`
+	IfName     string   `yaml:"ifname" json:"ifname"`
+	MAC        string   `yaml:"mac" json:"mac,omitempty"`
+	Addresses  []string `yaml:"addresses" json:"addresses,omitempty"`
+	DefaultVia string   `yaml:"defaultVia" json:"defaultVia,omitempty"`
 }
 
 // Link models either a shared bridge segment or a point-to-point veth pair.
@@ -123,6 +170,7 @@ type ResolvedRouter struct {
 	Loopbacks  []string
 	Mounts     []Mount
 	Sysctls    map[string]string
+	Linux      Linux
 	Commands   []Command
 }
 
@@ -184,7 +232,7 @@ func (t *Topology) Validate() error {
 
 		resolved := t.ResolveRouter(name)
 		if resolved.Image == "" {
-			return fmt.Errorf("router %q is missing an image and lab.defaults.image is empty", name)
+			return fmt.Errorf("router %q resolved to an empty image", name)
 		}
 
 		for _, loopback := range router.Loopbacks {
@@ -207,6 +255,9 @@ func (t *Topology) Validate() error {
 			if !sysctlKeyPattern.MatchString(key) {
 				return fmt.Errorf("router %q has invalid sysctl key %q", name, key)
 			}
+		}
+		if err := validateLinux(name, router.Linux); err != nil {
+			return err
 		}
 		for _, command := range router.Commands {
 			switch command.Kind {
@@ -305,8 +356,11 @@ func (t *Topology) ResolveRouter(name string) ResolvedRouter {
 	if image == "" {
 		image = strings.TrimSpace(t.Lab.Defaults.Image)
 	}
+	if image == "" {
+		image = DefaultRouterImage
+	}
 
-	privileged := true
+	privileged := DefaultRouterPrivileged
 	if t.Lab.Defaults.Privileged != nil {
 		privileged = *t.Lab.Defaults.Privileged
 	}
@@ -331,7 +385,8 @@ func (t *Topology) ResolveRouter(name string) ResolvedRouter {
 		Env:        copyStringMap(router.Env),
 		Loopbacks:  append([]string(nil), router.Loopbacks...),
 		Mounts:     mounts,
-		Sysctls:    mergedSysctls(t.Lab.Defaults.Sysctls, router.Sysctls),
+		Sysctls:    mergedSysctls(defaultRouterSysctls(), mergedSysctls(t.Lab.Defaults.Sysctls, router.Sysctls)),
+		Linux:      copyLinux(router.Linux),
 		Commands:   append([]Command(nil), router.Commands...),
 	}
 }
@@ -440,8 +495,131 @@ func (t *Topology) Digest() (string, error) {
 	return fmt.Sprintf("sha256:%x", sum[:]), nil
 }
 
+func validateLinux(routerName string, linux Linux) error {
+	bridgeNames := make(map[string]struct{}, len(linux.Bridges))
+	namespaceNames := make(map[string]struct{})
+	vxlanNames := make(map[string]struct{})
+	bridgeInterfaces := make(map[string]string)
+
+	for _, route := range linux.Routes {
+		if strings.TrimSpace(route.To) == "" {
+			return fmt.Errorf("router %q has a linux route with empty to", routerName)
+		}
+		if strings.TrimSpace(route.Via) == "" && strings.TrimSpace(route.Dev) == "" {
+			return fmt.Errorf("router %q route %q must set via, dev, or both", routerName, route.To)
+		}
+		if route.Via != "" && net.ParseIP(route.Via) == nil {
+			return fmt.Errorf("router %q route %q has invalid via %q", routerName, route.To, route.Via)
+		}
+	}
+
+	for _, bridge := range linux.Bridges {
+		if strings.TrimSpace(bridge.Name) == "" {
+			return fmt.Errorf("router %q has a linux bridge with empty name", routerName)
+		}
+		if _, ok := bridgeNames[bridge.Name]; ok {
+			return fmt.Errorf("router %q reuses linux bridge name %q", routerName, bridge.Name)
+		}
+		bridgeNames[bridge.Name] = struct{}{}
+
+		for _, address := range bridge.Addresses {
+			if _, _, err := net.ParseCIDR(address); err != nil {
+				return fmt.Errorf("router %q bridge %q has invalid address %q: %w", routerName, bridge.Name, address, err)
+			}
+		}
+		for _, iface := range bridge.Interfaces {
+			if strings.TrimSpace(iface) == "" {
+				return fmt.Errorf("router %q bridge %q references an empty interface", routerName, bridge.Name)
+			}
+			if owner, ok := bridgeInterfaces[iface]; ok {
+				return fmt.Errorf("router %q reuses interface %q across linux bridges %q and %q", routerName, iface, owner, bridge.Name)
+			}
+			bridgeInterfaces[iface] = bridge.Name
+		}
+		for _, vxlan := range bridge.VXLANS {
+			if strings.TrimSpace(vxlan.Name) == "" {
+				return fmt.Errorf("router %q bridge %q has a vxlan with empty name", routerName, bridge.Name)
+			}
+			if _, ok := vxlanNames[vxlan.Name]; ok {
+				return fmt.Errorf("router %q reuses vxlan name %q", routerName, vxlan.Name)
+			}
+			vxlanNames[vxlan.Name] = struct{}{}
+			if vxlan.VNI <= 0 || vxlan.VNI > 16777215 {
+				return fmt.Errorf("router %q bridge %q vxlan %q has invalid vni %d", routerName, bridge.Name, vxlan.Name, vxlan.VNI)
+			}
+			if vxlan.Local != "" && net.ParseIP(vxlan.Local) == nil {
+				return fmt.Errorf("router %q bridge %q vxlan %q has invalid local %q", routerName, bridge.Name, vxlan.Name, vxlan.Local)
+			}
+			if vxlan.DstPort < 0 || vxlan.DstPort > 65535 {
+				return fmt.Errorf("router %q bridge %q vxlan %q has invalid dstport %d", routerName, bridge.Name, vxlan.Name, vxlan.DstPort)
+			}
+		}
+		for _, namespace := range bridge.Namespaces {
+			if strings.TrimSpace(namespace.Name) == "" {
+				return fmt.Errorf("router %q bridge %q has a namespace with empty name", routerName, bridge.Name)
+			}
+			if _, ok := namespaceNames[namespace.Name]; ok {
+				return fmt.Errorf("router %q reuses namespace name %q", routerName, namespace.Name)
+			}
+			namespaceNames[namespace.Name] = struct{}{}
+			if strings.TrimSpace(namespace.IfName) == "" {
+				return fmt.Errorf("router %q bridge %q namespace %q has empty ifname", routerName, bridge.Name, namespace.Name)
+			}
+			if namespace.MAC != "" {
+				if _, err := net.ParseMAC(namespace.MAC); err != nil {
+					return fmt.Errorf("router %q bridge %q namespace %q has invalid mac %q: %w", routerName, bridge.Name, namespace.Name, namespace.MAC, err)
+				}
+			}
+			for _, address := range namespace.Addresses {
+				if _, _, err := net.ParseCIDR(address); err != nil {
+					return fmt.Errorf("router %q bridge %q namespace %q has invalid address %q: %w", routerName, bridge.Name, namespace.Name, address, err)
+				}
+			}
+			if namespace.DefaultVia != "" && net.ParseIP(namespace.DefaultVia) == nil {
+				return fmt.Errorf("router %q bridge %q namespace %q has invalid defaultVia %q", routerName, bridge.Name, namespace.Name, namespace.DefaultVia)
+			}
+		}
+	}
+
+	return nil
+}
+
 func copyStringMap(input map[string]string) map[string]string {
 	return maps.Clone(input)
+}
+
+func defaultRouterSysctls() map[string]string {
+	return map[string]string{
+		"net.ipv4.ip_forward":         "1",
+		"net.ipv4.conf.all.rp_filter": "0",
+	}
+}
+
+func copyLinux(linux Linux) Linux {
+	result := Linux{
+		Routes:  append([]Route(nil), linux.Routes...),
+		Bridges: make([]Bridge, 0, len(linux.Bridges)),
+	}
+	for _, bridge := range linux.Bridges {
+		copyBridge := Bridge{
+			Name:       bridge.Name,
+			Addresses:  append([]string(nil), bridge.Addresses...),
+			Interfaces: append([]string(nil), bridge.Interfaces...),
+			VXLANS:     append([]VXLAN(nil), bridge.VXLANS...),
+			Namespaces: make([]Namespace, 0, len(bridge.Namespaces)),
+		}
+		for _, namespace := range bridge.Namespaces {
+			copyBridge.Namespaces = append(copyBridge.Namespaces, Namespace{
+				Name:       namespace.Name,
+				IfName:     namespace.IfName,
+				MAC:        namespace.MAC,
+				Addresses:  append([]string(nil), namespace.Addresses...),
+				DefaultVia: namespace.DefaultVia,
+			})
+		}
+		result.Bridges = append(result.Bridges, copyBridge)
+	}
+	return result
 }
 
 func mergedSysctls(defaults, overrides map[string]string) map[string]string {

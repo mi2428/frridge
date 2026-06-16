@@ -67,6 +67,50 @@ links:
 	}
 }
 
+func TestLoadFileAppliesBuiltInRouterDefaults(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	topologyPath := filepath.Join(tmpDir, "lab.yaml")
+	if err := os.WriteFile(topologyPath, []byte(`
+apiVersion: frridge/v1alpha1
+lab:
+  name: builtins
+routers:
+  r1: {}
+  r2: {}
+links:
+  - name: uplink
+    type: p2p
+    members:
+      - router: r1
+        ifname: eth1
+      - router: r2
+        ifname: eth1
+`), 0o644); err != nil {
+		t.Fatalf("write topology: %v", err)
+	}
+
+	topology, err := LoadFile(topologyPath)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+
+	router := topology.ResolveRouter("r1")
+	if got, want := router.Image, DefaultRouterImage; got != want {
+		t.Fatalf("ResolveRouter().Image = %q, want %q", got, want)
+	}
+	if got, want := router.Privileged, DefaultRouterPrivileged; got != want {
+		t.Fatalf("ResolveRouter().Privileged = %t, want %t", got, want)
+	}
+	if got := router.Sysctls["net.ipv4.ip_forward"]; got != "1" {
+		t.Fatalf("ResolveRouter().Sysctls[ip_forward] = %q, want 1", got)
+	}
+	if got := router.Sysctls["net.ipv4.conf.all.rp_filter"]; got != "0" {
+		t.Fatalf("ResolveRouter().Sysctls[rp_filter] = %q, want 0", got)
+	}
+}
+
 func TestValidateRejectsDuplicateInterfacesAcrossLinks(t *testing.T) {
 	t.Parallel()
 
@@ -195,6 +239,100 @@ func TestValidateAcceptsNamedPingChecks(t *testing.T) {
 
 	if err := topology.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAcceptsLinuxDataplaneConfig(t *testing.T) {
+	t.Parallel()
+
+	topology := &Topology{
+		APIVersion: APIVersion,
+		Lab:        Lab{Name: "linux-lab"},
+		Routers: map[string]Router{
+			"r1": {
+				Linux: Linux{
+					Routes: []Route{
+						{
+							To:  "10.255.0.2/32",
+							Via: "192.0.2.1",
+						},
+					},
+					Bridges: []Bridge{
+						{
+							Name:       "br10",
+							Addresses:  []string{"10.10.10.1/24"},
+							Interfaces: []string{"eth1"},
+							VXLANS: []VXLAN{
+								{
+									Name:       "vxlan100",
+									VNI:        100,
+									Local:      "10.255.0.1",
+									NoLearning: true,
+								},
+							},
+							Namespaces: []Namespace{
+								{
+									Name:       "host",
+									IfName:     "eth0",
+									MAC:        "02:00:00:00:10:11",
+									Addresses:  []string{"10.10.10.11/24"},
+									DefaultVia: "10.10.10.1",
+								},
+							},
+						},
+					},
+				},
+			},
+			"r2": {},
+		},
+		Links: []Link{
+			{
+				Name: "fabric",
+				Type: "p2p",
+				Members: []LinkMember{
+					{Router: "r1", IfName: "eth1"},
+					{Router: "r2", IfName: "eth1"},
+				},
+			},
+		},
+	}
+
+	if err := topology.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsLinuxRouteWithoutViaOrDevice(t *testing.T) {
+	t.Parallel()
+
+	topology := &Topology{
+		APIVersion: APIVersion,
+		Lab:        Lab{Name: "linux-lab"},
+		Routers: map[string]Router{
+			"r1": {
+				Linux: Linux{
+					Routes: []Route{
+						{To: "10.255.0.2/32"},
+					},
+				},
+			},
+			"r2": {},
+		},
+		Links: []Link{
+			{
+				Name: "fabric",
+				Type: "p2p",
+				Members: []LinkMember{
+					{Router: "r1", IfName: "eth1"},
+					{Router: "r2", IfName: "eth1"},
+				},
+			},
+		},
+	}
+
+	err := topology.Validate()
+	if err == nil || !strings.Contains(err.Error(), `must set via, dev, or both`) {
+		t.Fatalf("Validate() error = %v, want linux route validation error", err)
 	}
 }
 

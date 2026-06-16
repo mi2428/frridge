@@ -1,7 +1,7 @@
 # eBGP Inter-AS Option C (2 Routers)
 
 This example collapses each domain into one border router and models option C as loopback-to-loopback eBGP over a separate transport link.
-`lab.yaml` uses `eth1` only for transport and pins the actual eBGP session to the loopbacks.
+`lab.yaml` uses `eth1` only for transport, `linux.routes` provides the loopback reachability, and the actual eBGP session is pinned to the loopbacks.
 
 ## Topology
 
