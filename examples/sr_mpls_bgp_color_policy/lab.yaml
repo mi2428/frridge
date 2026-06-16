@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: sr-mpls-static-color-policy
+  name: sr-mpls-bgp-color-policy
   workdir: .frridge
 
 routers:
@@ -20,7 +20,8 @@ routers:
         run: |
           configure terminal
           hostname r1
-          ip route 10.255.83.3/32 10.255.83.3 color 100
+          route-map SET-SR-POLICY permit 10
+           set sr-te color 100
           router isis CORE
            net 49.0001.0000.0000.8301.00
            is-type level-2-only
@@ -46,6 +47,17 @@ routers:
           interface eth2
            ip router isis CORE
            isis network point-to-point
+          exit
+          router bgp 65000
+           bgp router-id 10.255.83.1
+           no bgp default ipv4-unicast
+           neighbor 10.255.83.3 remote-as 65000
+           neighbor 10.255.83.3 update-source lo
+           address-family ipv4 unicast
+            network 10.255.83.1/32
+            neighbor 10.255.83.3 activate
+            neighbor 10.255.83.3 route-map SET-SR-POLICY in
+           exit-address-family
           exit
           segment-routing
            traffic-eng
@@ -121,7 +133,8 @@ routers:
         run: |
           configure terminal
           hostname r3
-          ip route 10.255.83.1/32 10.255.83.1 color 200
+          route-map SET-SR-POLICY permit 10
+           set sr-te color 200
           router isis CORE
            net 49.0001.0000.0000.8303.00
            is-type level-2-only
@@ -147,6 +160,17 @@ routers:
           interface eth2
            ip router isis CORE
            isis network point-to-point
+          exit
+          router bgp 65000
+           bgp router-id 10.255.83.3
+           no bgp default ipv4-unicast
+           neighbor 10.255.83.1 remote-as 65000
+           neighbor 10.255.83.1 update-source lo
+           address-family ipv4 unicast
+            network 10.255.83.3/32
+            neighbor 10.255.83.1 activate
+            neighbor 10.255.83.1 route-map SET-SR-POLICY in
+           exit-address-family
           exit
           segment-routing
            traffic-eng

@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: srv6-l3vpn-ipv4-vrf
+  name: srv6-l3vpn-end-dt4-dt6
   workdir: .frridge
   defaults:
     sysctls:
@@ -34,9 +34,11 @@ routers:
           exit
           interface eth3
            ip address 192.168.1.254/24
+           ipv6 address 2001:1::ffff/64
           exit
           interface eth4
            ip address 192.168.1.254/24
+           ipv6 address 2001:1::ffff/64
           exit
           segment-routing
            srv6
@@ -59,6 +61,10 @@ routers:
             neighbor 2001:db8:12::2 activate
             neighbor 2001:db8:13::3 activate
            exit-address-family
+           address-family ipv6 vpn
+            neighbor 2001:db8:12::2 activate
+            neighbor 2001:db8:13::3 activate
+           exit-address-family
           exit
           router bgp 65001 vrf vrf10
            bgp router-id 192.0.2.1
@@ -66,6 +72,14 @@ routers:
             redistribute connected
             sid vpn export 1
             rd vpn export 65001:10
+            rt vpn both 0:10
+            import vpn
+           export vpn
+           exit-address-family
+           address-family ipv6 unicast
+            redistribute connected
+            sid vpn export 11
+            rd vpn export 65001:110
             rt vpn both 0:10
             import vpn
             export vpn
@@ -77,6 +91,14 @@ routers:
             redistribute connected
             sid vpn export 2
             rd vpn export 65001:20
+            rt vpn both 0:20
+            import vpn
+           export vpn
+           exit-address-family
+           address-family ipv6 unicast
+            redistribute connected
+            sid vpn export 12
+            rd vpn export 65001:120
             rt vpn both 0:20
             import vpn
             export vpn
@@ -107,9 +129,11 @@ routers:
           exit
           interface eth2
            ip address 192.168.2.254/24
+           ipv6 address 2001:2::ffff/64
           exit
           interface eth3
            ip address 192.168.2.254/24
+           ipv6 address 2001:2::ffff/64
           exit
           segment-routing
            srv6
@@ -129,6 +153,9 @@ routers:
            address-family ipv4 vpn
             neighbor 2001:db8:12::1 activate
            exit-address-family
+           address-family ipv6 vpn
+            neighbor 2001:db8:12::1 activate
+           exit-address-family
           exit
           router bgp 65002 vrf vrf10
            bgp router-id 192.0.2.2
@@ -136,6 +163,14 @@ routers:
             redistribute connected
             sid vpn export 1
             rd vpn export 65002:10
+            rt vpn both 0:10
+            import vpn
+           export vpn
+           exit-address-family
+           address-family ipv6 unicast
+            redistribute connected
+            sid vpn export 11
+            rd vpn export 65002:110
             rt vpn both 0:10
             import vpn
             export vpn
@@ -147,6 +182,14 @@ routers:
             redistribute connected
             sid vpn export 2
             rd vpn export 65002:20
+            rt vpn both 0:20
+            import vpn
+           export vpn
+           exit-address-family
+           address-family ipv6 unicast
+            redistribute connected
+            sid vpn export 12
+            rd vpn export 65002:120
             rt vpn both 0:20
             import vpn
             export vpn
@@ -177,9 +220,11 @@ routers:
           exit
           interface eth2
            ip address 192.168.3.254/24
+           ipv6 address 2001:3::ffff/64
           exit
           interface eth3
            ip address 192.168.3.254/24
+           ipv6 address 2001:3::ffff/64
           exit
           segment-routing
            srv6
@@ -200,6 +245,9 @@ routers:
            address-family ipv4 vpn
             neighbor 2001:db8:13::1 activate
            exit-address-family
+           address-family ipv6 vpn
+            neighbor 2001:db8:13::1 activate
+           exit-address-family
           exit
           router bgp 65001 vrf vrf10
            bgp router-id 192.0.2.3
@@ -207,6 +255,14 @@ routers:
             redistribute connected
             sid vpn export 1
             rd vpn export 65001:10
+            rt vpn both 0:10
+            import vpn
+           export vpn
+           exit-address-family
+           address-family ipv6 unicast
+            redistribute connected
+            sid vpn export 11
+            rd vpn export 65001:310
             rt vpn both 0:10
             import vpn
             export vpn
@@ -218,6 +274,14 @@ routers:
             redistribute connected
             sid vpn export 2
             rd vpn export 65001:20
+            rt vpn both 0:20
+            import vpn
+           export vpn
+           exit-address-family
+           address-family ipv6 unicast
+            redistribute connected
+            sid vpn export 12
+            rd vpn export 65001:320
             rt vpn both 0:20
             import vpn
             export vpn
@@ -359,6 +423,26 @@ links:
       - { router: c32, ifname: eth1 }
 
 pings:
+  - name: vrf10-ipv4-r1-to-r2-end-dt4
+    from:
+      router: c11
+    to: 192.168.2.1
+
+  - name: vrf10-ipv6-r1-to-r2-end-dt6
+    from:
+      router: c11
+    to: 2001:2::1
+
+  - name: vrf20-ipv4-r1-to-r3-end-dt4
+    from:
+      router: c12
+    to: 192.168.3.1
+
+  - name: vrf20-ipv6-r1-to-r3-end-dt6
+    from:
+      router: c12
+    to: 2001:3::1
+
   - name: r1-to-r2-locator
     from:
       router: r1

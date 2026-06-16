@@ -1,8 +1,6 @@
-# SR-MPLS Explicit Policy Failover
+# SR-MPLS BGP Color Policy
 
-This example uses `pathd` to steer a loopback route across a four-router
-diamond with an explicit segment list. It is useful for observing a programmed
-SR policy and then manually changing links or metrics.
+This example uses `pathd` to install SR-MPLS policies and BGP route-maps with `set sr-te color` to steer BGP-learned loopback routes into those policies.
 
 ## Topology
 

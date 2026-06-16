@@ -1,0 +1,176 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: bgp-pic-edge-failover
+  workdir: .frridge
+
+routers:
+  edge:
+    loopbacks:
+      - 10.255.74.11/32
+    linux:
+      routes:
+        - to: 10.255.74.100/32
+          via: 192.0.2.1
+          dev: eth1
+      bridges:
+        - name: br10
+          addresses: [10.10.74.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:74:11
+              addresses: [10.10.74.11/24]
+              defaultVia: 10.10.74.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname edge
+          router bgp 65000
+           bgp router-id 10.255.74.11
+           bgp bestpath as-path multipath-relax
+           neighbor 10.255.74.100 remote-as 65000
+           neighbor 10.255.74.100 update-source lo
+           address-family ipv4 unicast
+            network 10.10.74.0/24
+            neighbor 10.255.74.100 activate
+            maximum-paths ibgp 2
+           exit-address-family
+          end
+
+  rr:
+    loopbacks:
+      - 10.255.74.100/32
+    linux:
+      routes:
+        - to: 10.255.74.11/32
+          via: 192.0.2.0
+          dev: eth1
+        - to: 10.255.74.21/32
+          via: 192.0.2.3
+          dev: eth2
+        - to: 10.255.74.22/32
+          via: 192.0.2.5
+          dev: eth3
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.74.100
+           bgp cluster-id 10.255.74.100
+           neighbor 10.255.74.11 remote-as 65000
+           neighbor 10.255.74.11 update-source lo
+           neighbor 10.255.74.11 route-reflector-client
+           neighbor 10.255.74.21 remote-as 65000
+           neighbor 10.255.74.21 update-source lo
+           neighbor 10.255.74.21 route-reflector-client
+           neighbor 10.255.74.22 remote-as 65000
+           neighbor 10.255.74.22 update-source lo
+           neighbor 10.255.74.22 route-reflector-client
+           address-family ipv4 unicast
+            neighbor 10.255.74.11 activate
+            neighbor 10.255.74.11 addpath-tx-all-paths
+            neighbor 10.255.74.21 activate
+            neighbor 10.255.74.22 activate
+           exit-address-family
+          end
+
+  exit1:
+    loopbacks:
+      - 10.255.74.21/32
+    linux:
+      routes:
+        - to: 10.255.74.100/32
+          via: 192.0.2.2
+          dev: eth1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname exit1
+          interface eth2
+           ip address 10.30.74.1/24
+          exit
+          router bgp 65000
+           bgp router-id 10.255.74.21
+           neighbor 10.255.74.100 remote-as 65000
+           neighbor 10.255.74.100 update-source lo
+           address-family ipv4 unicast
+            network 10.30.74.0/24
+            neighbor 10.255.74.100 activate
+           exit-address-family
+          end
+
+  exit2:
+    loopbacks:
+      - 10.255.74.22/32
+    linux:
+      routes:
+        - to: 10.255.74.100/32
+          via: 192.0.2.4
+          dev: eth1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname exit2
+          interface eth2
+           ip address 10.30.74.2/24
+          exit
+          router bgp 65000
+           bgp router-id 10.255.74.22
+           neighbor 10.255.74.100 remote-as 65000
+           neighbor 10.255.74.100 update-source lo
+           address-family ipv4 unicast
+            network 10.30.74.0/24
+            neighbor 10.255.74.100 activate
+           exit-address-family
+          end
+
+  service:
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          interface eth1
+           ip address 10.30.74.33/24
+          exit
+          ip route 0.0.0.0/0 10.30.74.1
+          end
+
+links:
+  - name: edge-rr
+    type: p2p
+    members:
+      - { router: edge, ifname: eth1, ipv4: 192.0.2.0/31 }
+      - { router: rr, ifname: eth1, ipv4: 192.0.2.1/31 }
+
+  - name: rr-exit1
+    type: p2p
+    members:
+      - { router: rr, ifname: eth2, ipv4: 192.0.2.2/31 }
+      - { router: exit1, ifname: eth1, ipv4: 192.0.2.3/31 }
+
+  - name: rr-exit2
+    type: p2p
+    members:
+      - { router: rr, ifname: eth3, ipv4: 192.0.2.4/31 }
+      - { router: exit2, ifname: eth1, ipv4: 192.0.2.5/31 }
+
+  - name: service-lan
+    type: bridge
+    members:
+      - { router: exit1, ifname: eth2 }
+      - { router: exit2, ifname: eth2 }
+      - { router: service, ifname: eth1 }
+
+pings:
+  - name: edge-host-to-service
+    from:
+      router: edge
+      namespace: host
+      address: 10.10.74.11
+    to: 10.30.74.33

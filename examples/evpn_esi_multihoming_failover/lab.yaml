@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: evpn-esi-multihoming-control-plane
+  name: evpn-esi-multihoming-failover
   workdir: .frridge
 
 routers:
@@ -20,6 +20,7 @@ routers:
            no bgp default ipv4-unicast
            neighbor 10.0.81.0 remote-as 65000
            neighbor 10.0.81.2 remote-as 65000
+           neighbor 10.0.81.4 remote-as 65000
            address-family ipv4 unicast
             network 10.255.81.100/32
             neighbor 10.0.81.0 activate
@@ -28,12 +29,17 @@ routers:
             neighbor 10.0.81.2 activate
             neighbor 10.0.81.2 route-reflector-client
             neighbor 10.0.81.2 next-hop-self force
+            neighbor 10.0.81.4 activate
+            neighbor 10.0.81.4 route-reflector-client
+            neighbor 10.0.81.4 next-hop-self force
            exit-address-family
            address-family l2vpn evpn
             neighbor 10.0.81.0 activate
             neighbor 10.0.81.0 route-reflector-client
             neighbor 10.0.81.2 activate
             neighbor 10.0.81.2 route-reflector-client
+            neighbor 10.0.81.4 activate
+            neighbor 10.0.81.4 route-reflector-client
            exit-address-family
           end
 
@@ -119,7 +125,53 @@ routers:
            evpn mh es-df-pref 100
           end
 
-  srv: {}
+  pe3:
+    loopbacks:
+      - 10.255.81.13/32
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.81.13
+              nolearning: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:81:13
+              addresses: [10.10.81.13/24]
+    commands:
+      - kind: shell
+        run: ip netns exec host ping -c 1 -W 1 10.10.81.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe3
+          router bgp 65000
+           bgp router-id 10.255.81.13
+           no bgp default ipv4-unicast
+           neighbor 10.0.81.5 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.81.13/32
+            neighbor 10.0.81.5 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.81.5 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  srv:
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname srv
+          interface eth1
+           ip address 10.10.81.11/24
+          exit
+          end
 
 links:
   - name: rr-pe1
@@ -142,6 +194,16 @@ links:
         ifname: eth2
         ipv4: 10.0.81.3/31
 
+  - name: rr-pe3
+    type: p2p
+    members:
+      - router: pe3
+        ifname: eth1
+        ipv4: 10.0.81.4/31
+      - router: rr
+        ifname: eth3
+        ipv4: 10.0.81.5/31
+
   - name: access
     type: bridge
     members:
@@ -153,7 +215,8 @@ links:
         ifname: eth1
 
 pings:
-  - name: pe1-to-rr-underlay
+  - name: multihomed-server-to-remote-vtep
     from:
-      router: pe1
-    to: 10.0.81.1
+      router: srv
+      address: 10.10.81.11
+    to: 10.10.81.13

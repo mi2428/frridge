@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: sr-mpls-explicit-policy-failover
+  name: sr-mpls-tilfa-failover
   workdir: .frridge
 
 routers:
@@ -42,10 +42,12 @@ routers:
           interface eth1
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           interface eth2
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           segment-routing
            traffic-eng
@@ -99,10 +101,12 @@ routers:
           interface eth1
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           interface eth2
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           end
 
@@ -143,10 +147,12 @@ routers:
           interface eth1
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           interface eth2
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           segment-routing
            traffic-eng
@@ -200,10 +206,12 @@ routers:
           interface eth1
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           interface eth2
            ip router isis CORE
            isis network point-to-point
+           isis fast-reroute ti-lfa level-2 node-protection link-fallback
           exit
           end
 

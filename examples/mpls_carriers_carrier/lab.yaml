@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: ebgp-option-c-multihop
+  name: mpls-carriers-carrier
   workdir: .frridge
 
 routers:
@@ -23,19 +23,35 @@ routers:
               addresses: [10.10.30.11/24]
               defaultVia: 10.10.30.1
     commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
       - kind: vtysh
         run: |
           configure terminal
           hostname pe1
+          interface eth1
+           mpls bgp forwarding
+          exit
           router bgp 65001
            bgp router-id 10.255.2.11
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
            neighbor 10.255.2.12 remote-as 65002
            neighbor 10.255.2.12 update-source lo
            neighbor 10.255.2.12 ebgp-multihop 5
            address-family ipv4 unicast
             network 10.255.2.11/32
             network 10.10.30.0/24
+            no neighbor 10.255.2.12 activate
+           exit-address-family
+           address-family ipv4 labeled-unicast
             neighbor 10.255.2.12 activate
+            network 10.255.2.11/32
+            network 10.10.30.0/24
            exit-address-family
           end
 
@@ -56,6 +72,24 @@ routers:
         - to: 10.255.2.12/32
           via: 192.0.2.3
           dev: eth2
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr1
+          interface eth1
+           mpls enable
+          exit
+          interface eth2
+           mpls enable
+          exit
+          end
 
   asbr2:
     loopbacks:
@@ -74,6 +108,24 @@ routers:
         - to: 10.255.2.12/32
           via: 192.0.2.4
           dev: eth2
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr2
+          interface eth1
+           mpls enable
+          exit
+          interface eth2
+           mpls enable
+          exit
+          end
 
   pe2:
     loopbacks:
@@ -93,19 +145,35 @@ routers:
               addresses: [10.20.30.12/24]
               defaultVia: 10.20.30.1
     commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
       - kind: vtysh
         run: |
           configure terminal
           hostname pe2
+          interface eth1
+           mpls bgp forwarding
+          exit
           router bgp 65002
            bgp router-id 10.255.2.12
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
            neighbor 10.255.2.11 remote-as 65001
            neighbor 10.255.2.11 update-source lo
            neighbor 10.255.2.11 ebgp-multihop 5
            address-family ipv4 unicast
             network 10.255.2.12/32
             network 10.20.30.0/24
+            no neighbor 10.255.2.11 activate
+           exit-address-family
+           address-family ipv4 labeled-unicast
             neighbor 10.255.2.11 activate
+            network 10.255.2.12/32
+            network 10.20.30.0/24
            exit-address-family
           end
 

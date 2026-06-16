@@ -1,41 +1,35 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: evpn-with-srv6-isis-underlay
+  name: evpn-over-srv6-underlay
   workdir: .frridge
   defaults:
     sysctls:
+      net.ipv4.ip_forward: "1"
       net.ipv6.conf.all.forwarding: "1"
+      net.ipv6.conf.all.seg6_enabled: "1"
+      net.ipv6.conf.default.seg6_enabled: "1"
 
 routers:
-  rr:
+  core:
     loopbacks:
-      - 10.255.80.100/32
-      - 2001:db8:94::100/128
+      - 2001:db8:80::100/128
     commands:
       - kind: shell
         run: |
           set -e
-          ip -6 addr replace 2001:db8:94:1::1/127 dev eth1
-          ip -6 addr replace 2001:db8:94:2::1/127 dev eth2
+          sysctl -w net.ipv6.conf.eth1.seg6_enabled=1
+          sysctl -w net.ipv6.conf.eth2.seg6_enabled=1
+          ip -6 addr replace 2001:db8:80:1::1/127 dev eth1
+          ip -6 addr replace 2001:db8:80:2::1/127 dev eth2
+          ip -6 route replace fd00:80:11::/64 via 2001:db8:80:1::0 dev eth1
+          ip -6 route replace fd00:80:12::/64 via 2001:db8:80:2::0 dev eth2
       - kind: vtysh
         run: |
           configure terminal
-          hostname rr
-          segment-routing
-           srv6
-            encapsulation
-             source-address 2001:db8:94::100
-            exit
-            locators
-             locator loc1
-              prefix fd00:94:100::/64 block-len 48 node-len 16
-              format uncompressed-f4024
-           exit
-           exit
-           exit
+          hostname core
           router isis CORE
-           net 49.0001.0000.0000.9410.00
+           net 49.0001.0000.0000.8010.00
            is-type level-2-only
            metric-style wide
            topology ipv6-unicast
@@ -52,34 +46,12 @@ routers:
            ipv6 router isis CORE
            isis network point-to-point
           exit
-          router bgp 65000
-           bgp router-id 10.255.80.100
-           bgp cluster-id 10.255.80.100
-           bgp retain route-target all
-           no bgp default ipv4-unicast
-           neighbor 10.0.80.0 remote-as 65000
-           neighbor 10.0.80.2 remote-as 65000
-           address-family ipv4 unicast
-            network 10.255.80.100/32
-            neighbor 10.0.80.0 activate
-            neighbor 10.0.80.0 route-reflector-client
-            neighbor 10.0.80.0 next-hop-self force
-            neighbor 10.0.80.2 activate
-            neighbor 10.0.80.2 route-reflector-client
-            neighbor 10.0.80.2 next-hop-self force
-           exit-address-family
-           address-family l2vpn evpn
-            neighbor 10.0.80.0 activate
-            neighbor 10.0.80.0 route-reflector-client
-            neighbor 10.0.80.2 activate
-            neighbor 10.0.80.2 route-reflector-client
-           exit-address-family
           end
 
   pe1:
     loopbacks:
       - 10.255.80.11/32
-      - 2001:db8:94::11/128
+      - 2001:db8:80::11/128
     linux:
       bridges:
         - name: br10
@@ -97,7 +69,11 @@ routers:
       - kind: shell
         run: |
           set -e
-          ip -6 addr replace 2001:db8:94:1::0/127 dev eth1
+          sysctl -w net.ipv6.conf.eth1.seg6_enabled=1
+          ip -6 addr replace 2001:db8:80:1::0/127 dev eth1
+          ip -6 route replace fd00:80:12::/64 via 2001:db8:80:1::1 dev eth1
+          ip -6 route replace local fd00:80:11::d4/128 encap seg6local action End.DX4 nh4 10.255.80.11 dev lo
+          ip route replace 10.255.80.12/32 encap seg6 mode encap segs fd00:80:12::d4 dev eth1
           ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
       - kind: vtysh
         run: |
@@ -106,17 +82,17 @@ routers:
           segment-routing
            srv6
             encapsulation
-             source-address 2001:db8:94::11
+             source-address 2001:db8:80::11
             exit
             locators
              locator loc1
-              prefix fd00:94:11::/64 block-len 48 node-len 16
+              prefix fd00:80:11::/64 block-len 48 node-len 16
               format uncompressed-f4024
            exit
            exit
            exit
           router isis CORE
-           net 49.0001.0000.0000.9411.00
+           net 49.0001.0000.0000.8011.00
            is-type level-2-only
            metric-style wide
            topology ipv6-unicast
@@ -132,13 +108,14 @@ routers:
           router bgp 65000
            bgp router-id 10.255.80.11
            no bgp default ipv4-unicast
-           neighbor 10.0.80.1 remote-as 65000
+           neighbor 10.255.80.12 remote-as 65000
+           neighbor 10.255.80.12 update-source lo
            address-family ipv4 unicast
             network 10.255.80.11/32
-            neighbor 10.0.80.1 activate
+            neighbor 10.255.80.12 activate
            exit-address-family
            address-family l2vpn evpn
-            neighbor 10.0.80.1 activate
+            neighbor 10.255.80.12 activate
             advertise-all-vni
            exit-address-family
           end
@@ -146,7 +123,7 @@ routers:
   pe2:
     loopbacks:
       - 10.255.80.12/32
-      - 2001:db8:94::12/128
+      - 2001:db8:80::12/128
     linux:
       bridges:
         - name: br10
@@ -164,7 +141,11 @@ routers:
       - kind: shell
         run: |
           set -e
-          ip -6 addr replace 2001:db8:94:2::0/127 dev eth1
+          sysctl -w net.ipv6.conf.eth1.seg6_enabled=1
+          ip -6 addr replace 2001:db8:80:2::0/127 dev eth1
+          ip -6 route replace fd00:80:11::/64 via 2001:db8:80:2::1 dev eth1
+          ip -6 route replace local fd00:80:12::d4/128 encap seg6local action End.DX4 nh4 10.255.80.12 dev lo
+          ip route replace 10.255.80.11/32 encap seg6 mode encap segs fd00:80:11::d4 dev eth1
           ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
       - kind: vtysh
         run: |
@@ -173,17 +154,17 @@ routers:
           segment-routing
            srv6
             encapsulation
-             source-address 2001:db8:94::12
+             source-address 2001:db8:80::12
             exit
             locators
              locator loc1
-              prefix fd00:94:12::/64 block-len 48 node-len 16
+              prefix fd00:80:12::/64 block-len 48 node-len 16
               format uncompressed-f4024
            exit
            exit
            exit
           router isis CORE
-           net 49.0001.0000.0000.9412.00
+           net 49.0001.0000.0000.8012.00
            is-type level-2-only
            metric-style wide
            topology ipv6-unicast
@@ -199,40 +180,33 @@ routers:
           router bgp 65000
            bgp router-id 10.255.80.12
            no bgp default ipv4-unicast
-           neighbor 10.0.80.3 remote-as 65000
+           neighbor 10.255.80.11 remote-as 65000
+           neighbor 10.255.80.11 update-source lo
            address-family ipv4 unicast
             network 10.255.80.12/32
-            neighbor 10.0.80.3 activate
+            neighbor 10.255.80.11 activate
            exit-address-family
            address-family l2vpn evpn
-            neighbor 10.0.80.3 activate
+            neighbor 10.255.80.11 activate
             advertise-all-vni
            exit-address-family
           end
 
 links:
-  - name: rr-pe1
+  - name: pe1-core
     type: p2p
     members:
-      - router: pe1
-        ifname: eth1
-        ipv4: 10.0.80.0/31
-      - router: rr
-        ifname: eth1
-        ipv4: 10.0.80.1/31
+      - { router: pe1, ifname: eth1 }
+      - { router: core, ifname: eth1 }
 
-  - name: rr-pe2
+  - name: core-pe2
     type: p2p
     members:
-      - router: pe2
-        ifname: eth1
-        ipv4: 10.0.80.2/31
-      - router: rr
-        ifname: eth2
-        ipv4: 10.0.80.3/31
+      - { router: pe2, ifname: eth1 }
+      - { router: core, ifname: eth2 }
 
 pings:
-  - name: pe1-host-to-pe2-host
+  - name: pe1-host-to-pe2-host-over-srv6-underlay
     from:
       router: pe1
       namespace: host

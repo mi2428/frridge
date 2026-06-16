@@ -1,8 +1,7 @@
-# SR-MPLS Static Color Policy
+# Seamless MPLS Multi-Domain
 
-This example uses `pathd` to steer a statically installed colored route across
-a four-router diamond with an explicit segment list. The color is attached with
-`ip route ... color`; there is no BGP color community in this lab.
+This example uses `pathd` to steer a loopback route across a four-router
+diamond with an explicit segment list.
 
 ## Topology
 

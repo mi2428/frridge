@@ -1,4 +1,4 @@
-# eBGP Option C Multihop (4 Routers)
+# MPLS Carrier's Carrier
 
 This example splits the topology into `PE -> ASBR -> ASBR -> PE`.
 `lab.yaml` keeps the two ASBRs out of the service BGP session and forms the actual inter-AS eBGP adjacency directly between `pe1` and `pe2`. Because this lab is IP-only, the ASBRs also carry static routes for the PE loopbacks and service subnets.
@@ -35,7 +35,7 @@ This example splits the topology into `PE -> ASBR -> ASBR -> PE`.
     - `br20`: `10.20.30.1/24`
     - `host` netns: `10.20.30.12/24`, MAC `02:00:00:00:c0:12`
 
-### Option C Multihop Behavior
+### Carrier's Carrier Behavior
 
 - `pe1` and `pe2` form the service eBGP session directly between their loopbacks.
 - `asbr1` and `asbr2` do not participate in the service BGP control plane.

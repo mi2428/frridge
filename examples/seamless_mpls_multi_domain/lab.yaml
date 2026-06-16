@@ -1,0 +1,262 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: seamless-mpls-multi-domain
+  workdir: .frridge
+
+routers:
+  pe1:
+    loopbacks:
+      - 10.255.84.11/32
+    linux:
+      routes:
+        - to: 10.255.84.1/32
+          via: 10.0.84.1
+          dev: eth1
+      bridges:
+        - name: br10
+          addresses: [10.10.84.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:84:11
+              addresses: [10.10.84.11/24]
+              defaultVia: 10.10.84.1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe1
+          interface eth1
+           mpls bgp forwarding
+          exit
+          router bgp 65001
+           bgp router-id 10.255.84.11
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.84.1 remote-as 65001
+           address-family ipv4 unicast
+            no neighbor 10.0.84.1 activate
+            network 10.10.84.0/24
+            network 10.255.84.11/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 10.0.84.1 activate
+            network 10.10.84.0/24
+            network 10.255.84.11/32
+           exit-address-family
+          end
+
+  abr1:
+    loopbacks:
+      - 10.255.84.1/32
+    linux:
+      routes:
+        - to: 10.255.84.11/32
+          via: 10.0.84.0
+          dev: eth1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname abr1
+          interface eth1
+           mpls bgp forwarding
+          exit
+          interface eth2
+           mpls bgp forwarding
+          exit
+          router bgp 65001
+           bgp router-id 10.255.84.1
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.84.0 remote-as 65001
+           neighbor 10.0.84.3 remote-as 65002
+           address-family ipv4 unicast
+            no neighbor 10.0.84.0 activate
+            no neighbor 10.0.84.3 activate
+            network 10.255.84.1/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 10.0.84.0 activate
+            neighbor 10.0.84.3 activate
+            network 10.255.84.1/32
+           exit-address-family
+          end
+
+  core:
+    loopbacks:
+      - 10.255.84.2/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname core
+          interface eth1
+           mpls bgp forwarding
+          exit
+          interface eth2
+           mpls bgp forwarding
+          exit
+          router bgp 65002
+           bgp router-id 10.255.84.2
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.84.2 remote-as 65001
+           neighbor 10.0.84.5 remote-as 65003
+           address-family ipv4 unicast
+            no neighbor 10.0.84.2 activate
+            no neighbor 10.0.84.5 activate
+            network 10.255.84.2/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 10.0.84.2 activate
+            neighbor 10.0.84.5 activate
+            network 10.255.84.2/32
+           exit-address-family
+          end
+
+  abr2:
+    loopbacks:
+      - 10.255.84.3/32
+    linux:
+      routes:
+        - to: 10.255.84.12/32
+          via: 10.0.84.6
+          dev: eth2
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+          sysctl -w net.mpls.conf.eth2.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname abr2
+          interface eth1
+           mpls bgp forwarding
+          exit
+          interface eth2
+           mpls bgp forwarding
+          exit
+          router bgp 65003
+           bgp router-id 10.255.84.3
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.84.4 remote-as 65002
+           neighbor 10.0.84.6 remote-as 65003
+           address-family ipv4 unicast
+            no neighbor 10.0.84.4 activate
+            no neighbor 10.0.84.6 activate
+            network 10.255.84.3/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 10.0.84.4 activate
+            neighbor 10.0.84.6 activate
+            network 10.255.84.3/32
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.84.12/32
+    linux:
+      routes:
+        - to: 10.255.84.3/32
+          via: 10.0.84.7
+          dev: eth1
+      bridges:
+        - name: br20
+          addresses: [10.20.84.1/24]
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:84:12
+              addresses: [10.20.84.12/24]
+              defaultVia: 10.20.84.1
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          sysctl -w net.mpls.platform_labels=104857
+          sysctl -w net.mpls.conf.lo.input=1
+          sysctl -w net.mpls.conf.eth1.input=1
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe2
+          interface eth1
+           mpls bgp forwarding
+          exit
+          router bgp 65003
+           bgp router-id 10.255.84.12
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.84.7 remote-as 65003
+           address-family ipv4 unicast
+            no neighbor 10.0.84.7 activate
+            network 10.20.84.0/24
+            network 10.255.84.12/32
+           exit-address-family
+           address-family ipv4 labeled-unicast
+            neighbor 10.0.84.7 activate
+            network 10.20.84.0/24
+            network 10.255.84.12/32
+           exit-address-family
+          end
+
+links:
+  - name: access-domain-a
+    type: p2p
+    members:
+      - { router: pe1, ifname: eth1, ipv4: 10.0.84.0/31 }
+      - { router: abr1, ifname: eth1, ipv4: 10.0.84.1/31 }
+
+  - name: core-domain-left
+    type: p2p
+    members:
+      - { router: abr1, ifname: eth2, ipv4: 10.0.84.2/31 }
+      - { router: core, ifname: eth1, ipv4: 10.0.84.3/31 }
+
+  - name: core-domain-right
+    type: p2p
+    members:
+      - { router: core, ifname: eth2, ipv4: 10.0.84.4/31 }
+      - { router: abr2, ifname: eth1, ipv4: 10.0.84.5/31 }
+
+  - name: access-domain-b
+    type: p2p
+    members:
+      - { router: pe2, ifname: eth1, ipv4: 10.0.84.6/31 }
+      - { router: abr2, ifname: eth2, ipv4: 10.0.84.7/31 }
+
+pings:
+  - name: pe1-host-to-pe2-host-over-bgp-lu-domains
+    from:
+      router: pe1
+      namespace: host
+      address: 10.10.84.11
+    to: 10.20.84.12

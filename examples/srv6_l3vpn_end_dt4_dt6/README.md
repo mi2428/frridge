@@ -1,4 +1,4 @@
-# SRv6 L3VPN IPv4 VRF
+# SRv6 L3VPN End.DT4/End.DT6
 
 This example carries two IPv4 VRFs across an IPv6 underlay with BGP VPNv4 and
 SRv6 service SIDs.
