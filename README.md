@@ -211,24 +211,24 @@ routers:
            bgp router-id 10.255.0.2
            no bgp default ipv4-unicast
 
-  host1: {}                    # empty router entries are valid and inherit the built-ins plus any lab.defaults
+  host1: {}                      # empty router entries are valid and inherit the built-ins plus any lab.defaults
 
 # Link definitions. Use p2p for point-to-point links and bridge for shared segments.
 links:
-  - name: rt1-rt2              # required; must be unique within the file
-    type: p2p                  # required; supported values are p2p and bridge
-    mtu: 1500                  # optional; applies to the host-side veth pair and router interfaces
+  - name: rt1-rt2                # required; must be unique within the file
+    type: p2p                    # required; supported values are p2p and bridge
+    mtu: 1500                    # optional; applies to the host-side veth pair and router interfaces
     members:
-      - router: rt1            # router must exist under routers:
-        ifname: eth1           # required; must be unique per router across all links
-        ipv4: 192.0.2.0/31     # optional; configured with `ip addr replace`
-        mac: 02:00:00:00:01:01 # optional; configured before the interface is brought up
+      - router: rt1              # router must exist under routers:
+        ifname: eth1             # required; must be unique per router across all links
+        ipv4: 192.0.2.0/31       # optional; configured with `ip addr replace`
+        mac: 02:00:00:00:01:01   # optional; configured before the interface is brought up
       - router: rt2
         ifname: eth1
         ipv4: 192.0.2.1/31
 
   - name: access
-    type: bridge               # bridge needs at least two members; p2p needs exactly two
+    type: bridge                 # bridge needs at least two members; p2p needs exactly two
     members:
       - router: rt1
         ifname: eth2
@@ -240,12 +240,12 @@ links:
 # Optional ping checks. These do nothing during `up`; they are only executed
 # when `frridge ping` or `frridge-mp ping` is invoked.
 pings:
-  - name: rt1-to-rt2-loopback   # required; must be unique within the file
+  - name: rt1-to-rt2-loopback    # required; must be unique within the file
     from:
-      router: rt1               # required; ping runs inside this router container
-      namespace: host           # optional; runs via `ip netns exec <namespace>` when set
-    to: 10.255.0.2              # required; target passed to ping(8) as-is
-    count: 5                    # optional; defaults to 3 when omitted
+      router: rt1                # required; ping runs inside this router container
+      namespace: host            # optional; runs via `ip netns exec <namespace>` when set
+    to: 10.255.0.2               # required; target passed to ping(8) as-is
+    count: 5                     # optional; defaults to 3 when omitted
 ```
 
 ### Minimal Manual Lab
