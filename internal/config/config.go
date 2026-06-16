@@ -33,6 +33,12 @@ const (
 )
 
 var sysctlKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+var addrGenModes = map[string]struct{}{
+	"eui64":         {},
+	"none":          {},
+	"stable_secret": {},
+	"random":        {},
+}
 
 // Topology is the fully decoded lab definition together with source-path
 // metadata used for resolving relative paths on disk.
@@ -91,8 +97,17 @@ type Command struct {
 // Linux describes router-local Linux dataplane objects that frridge can build
 // automatically after interfaces and loopbacks exist.
 type Linux struct {
-	Routes  []Route  `yaml:"routes" json:"routes,omitempty"`
-	Bridges []Bridge `yaml:"bridges" json:"bridges,omitempty"`
+	VRFs       []VRF       `yaml:"vrfs" json:"vrfs,omitempty"`
+	Interfaces []Interface `yaml:"interfaces" json:"interfaces,omitempty"`
+	Veths      []Veth      `yaml:"veths" json:"veths,omitempty"`
+	Routes     []Route     `yaml:"routes" json:"routes,omitempty"`
+	Bridges    []Bridge    `yaml:"bridges" json:"bridges,omitempty"`
+}
+
+// VRF describes one Linux VRF device and its routing table.
+type VRF struct {
+	Name  string `yaml:"name" json:"name"`
+	Table int    `yaml:"table" json:"table"`
 }
 
 // Route installs one static route in the router's default namespace.
@@ -102,22 +117,56 @@ type Route struct {
 	Dev string `yaml:"dev" json:"dev,omitempty"`
 }
 
+// Interface describes one existing Linux interface that should be configured
+// after links and loopbacks exist.
+type Interface struct {
+	Name        string   `yaml:"name" json:"name"`
+	Master      string   `yaml:"master" json:"master,omitempty"`
+	MAC         string   `yaml:"mac" json:"mac,omitempty"`
+	AddrGenMode string   `yaml:"addrgenmode" json:"addrgenmode,omitempty"`
+	Addresses   []string `yaml:"addresses" json:"addresses,omitempty"`
+}
+
+// Veth describes one router-local veth pair whose peer may be moved into a
+// Linux namespace.
+type Veth struct {
+	Name        string     `yaml:"name" json:"name"`
+	Peer        string     `yaml:"peer" json:"peer"`
+	Master      string     `yaml:"master" json:"master,omitempty"`
+	MAC         string     `yaml:"mac" json:"mac,omitempty"`
+	AddrGenMode string     `yaml:"addrgenmode" json:"addrgenmode,omitempty"`
+	Addresses   []string   `yaml:"addresses" json:"addresses,omitempty"`
+	Namespace   *Namespace `yaml:"namespace" json:"namespace,omitempty"`
+}
+
 // Bridge describes one bridge device and its attached Linux endpoints.
 type Bridge struct {
-	Name       string      `yaml:"name" json:"name"`
-	Addresses  []string    `yaml:"addresses" json:"addresses,omitempty"`
-	Interfaces []string    `yaml:"interfaces" json:"interfaces,omitempty"`
-	VXLANS     []VXLAN     `yaml:"vxlans" json:"vxlans,omitempty"`
-	Namespaces []Namespace `yaml:"namespaces" json:"namespaces,omitempty"`
+	Name        string      `yaml:"name" json:"name"`
+	Master      string      `yaml:"master" json:"master,omitempty"`
+	MAC         string      `yaml:"mac" json:"mac,omitempty"`
+	AddrGenMode string      `yaml:"addrgenmode" json:"addrgenmode,omitempty"`
+	Addresses   []string    `yaml:"addresses" json:"addresses,omitempty"`
+	Interfaces  []string    `yaml:"interfaces" json:"interfaces,omitempty"`
+	VXLANS      []VXLAN     `yaml:"vxlans" json:"vxlans,omitempty"`
+	Namespaces  []Namespace `yaml:"namespaces" json:"namespaces,omitempty"`
 }
 
 // VXLAN describes one VXLAN device enslaved to a bridge.
 type VXLAN struct {
-	Name       string `yaml:"name" json:"name"`
-	VNI        int    `yaml:"vni" json:"vni"`
-	Local      string `yaml:"local" json:"local,omitempty"`
-	DstPort    int    `yaml:"dstport" json:"dstport,omitempty"`
-	NoLearning bool   `yaml:"nolearning" json:"nolearning,omitempty"`
+	Name        string             `yaml:"name" json:"name"`
+	VNI         int                `yaml:"vni" json:"vni"`
+	Local       string             `yaml:"local" json:"local,omitempty"`
+	DstPort     int                `yaml:"dstport" json:"dstport,omitempty"`
+	NoLearning  bool               `yaml:"nolearning" json:"nolearning,omitempty"`
+	AddrGenMode string             `yaml:"addrgenmode" json:"addrgenmode,omitempty"`
+	BridgeSlave BridgeSlaveOptions `yaml:"bridgeSlave" json:"bridgeSlave,omitempty"`
+}
+
+// BridgeSlaveOptions describes optional per-port bridge_slave settings applied
+// to a VXLAN after it joins a bridge.
+type BridgeSlaveOptions struct {
+	Learning      *bool `yaml:"learning" json:"learning,omitempty"`
+	NeighSuppress *bool `yaml:"neighSuppress" json:"neighSuppress,omitempty"`
 }
 
 // Namespace describes one veth-backed Linux namespace attached to a bridge.
@@ -508,10 +557,63 @@ func (t *Topology) Digest() (string, error) {
 }
 
 func validateLinux(routerName string, linux Linux) error {
-	bridgeNames := make(map[string]struct{}, len(linux.Bridges))
-	namespaceNames := make(map[string]struct{})
-	vxlanNames := make(map[string]struct{})
+	createdDevices := make(map[string]string)
+	namespaceNames := make(map[string]string)
 	bridgeInterfaces := make(map[string]string)
+	interfaceNames := make(map[string]struct{}, len(linux.Interfaces))
+	vethPeerNames := make(map[string]struct{}, len(linux.Veths))
+
+	for _, vrf := range linux.VRFs {
+		if strings.TrimSpace(vrf.Name) == "" {
+			return fmt.Errorf("router %q has a vrf with empty name", routerName)
+		}
+		if vrf.Table <= 0 {
+			return fmt.Errorf("router %q vrf %q has invalid table %d", routerName, vrf.Name, vrf.Table)
+		}
+		if err := claimLinuxDevice(routerName, createdDevices, vrf.Name, "vrf"); err != nil {
+			return err
+		}
+	}
+
+	for _, iface := range linux.Interfaces {
+		if strings.TrimSpace(iface.Name) == "" {
+			return fmt.Errorf("router %q has a linux interface with empty name", routerName)
+		}
+		if _, ok := interfaceNames[iface.Name]; ok {
+			return fmt.Errorf("router %q reuses linux interface name %q", routerName, iface.Name)
+		}
+		interfaceNames[iface.Name] = struct{}{}
+		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("interface %q", iface.Name), iface.MAC, iface.AddrGenMode, iface.Addresses); err != nil {
+			return err
+		}
+	}
+
+	for _, veth := range linux.Veths {
+		if strings.TrimSpace(veth.Name) == "" {
+			return fmt.Errorf("router %q has a veth with empty name", routerName)
+		}
+		if strings.TrimSpace(veth.Peer) == "" {
+			return fmt.Errorf("router %q veth %q has empty peer", routerName, veth.Name)
+		}
+		if veth.Name == veth.Peer {
+			return fmt.Errorf("router %q veth %q reuses the same name for both ends", routerName, veth.Name)
+		}
+		if err := claimLinuxDevice(routerName, createdDevices, veth.Name, "veth"); err != nil {
+			return err
+		}
+		if _, ok := vethPeerNames[veth.Peer]; ok {
+			return fmt.Errorf("router %q reuses veth peer name %q", routerName, veth.Peer)
+		}
+		vethPeerNames[veth.Peer] = struct{}{}
+		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("veth %q", veth.Name), veth.MAC, veth.AddrGenMode, veth.Addresses); err != nil {
+			return err
+		}
+		if veth.Namespace != nil {
+			if err := validateLinuxNamespace(routerName, fmt.Sprintf("veth %q", veth.Name), *veth.Namespace, namespaceNames); err != nil {
+				return err
+			}
+		}
+	}
 
 	for _, route := range linux.Routes {
 		if strings.TrimSpace(route.To) == "" {
@@ -529,15 +631,11 @@ func validateLinux(routerName string, linux Linux) error {
 		if strings.TrimSpace(bridge.Name) == "" {
 			return fmt.Errorf("router %q has a linux bridge with empty name", routerName)
 		}
-		if _, ok := bridgeNames[bridge.Name]; ok {
-			return fmt.Errorf("router %q reuses linux bridge name %q", routerName, bridge.Name)
+		if err := claimLinuxDevice(routerName, createdDevices, bridge.Name, "bridge"); err != nil {
+			return err
 		}
-		bridgeNames[bridge.Name] = struct{}{}
-
-		for _, address := range bridge.Addresses {
-			if _, _, err := net.ParseCIDR(address); err != nil {
-				return fmt.Errorf("router %q bridge %q has invalid address %q: %w", routerName, bridge.Name, address, err)
-			}
+		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("bridge %q", bridge.Name), bridge.MAC, bridge.AddrGenMode, bridge.Addresses); err != nil {
+			return err
 		}
 		for _, iface := range bridge.Interfaces {
 			if strings.TrimSpace(iface) == "" {
@@ -552,10 +650,9 @@ func validateLinux(routerName string, linux Linux) error {
 			if strings.TrimSpace(vxlan.Name) == "" {
 				return fmt.Errorf("router %q bridge %q has a vxlan with empty name", routerName, bridge.Name)
 			}
-			if _, ok := vxlanNames[vxlan.Name]; ok {
-				return fmt.Errorf("router %q reuses vxlan name %q", routerName, vxlan.Name)
+			if err := claimLinuxDevice(routerName, createdDevices, vxlan.Name, "vxlan"); err != nil {
+				return err
 			}
-			vxlanNames[vxlan.Name] = struct{}{}
 			if vxlan.VNI <= 0 || vxlan.VNI > 16777215 {
 				return fmt.Errorf("router %q bridge %q vxlan %q has invalid vni %d", routerName, bridge.Name, vxlan.Name, vxlan.VNI)
 			}
@@ -565,34 +662,73 @@ func validateLinux(routerName string, linux Linux) error {
 			if vxlan.DstPort < 0 || vxlan.DstPort > 65535 {
 				return fmt.Errorf("router %q bridge %q vxlan %q has invalid dstport %d", routerName, bridge.Name, vxlan.Name, vxlan.DstPort)
 			}
+			if err := validateAddrGenMode(routerName, fmt.Sprintf("bridge %q vxlan %q", bridge.Name, vxlan.Name), vxlan.AddrGenMode); err != nil {
+				return err
+			}
 		}
 		for _, namespace := range bridge.Namespaces {
-			if strings.TrimSpace(namespace.Name) == "" {
-				return fmt.Errorf("router %q bridge %q has a namespace with empty name", routerName, bridge.Name)
-			}
-			if _, ok := namespaceNames[namespace.Name]; ok {
-				return fmt.Errorf("router %q reuses namespace name %q", routerName, namespace.Name)
-			}
-			namespaceNames[namespace.Name] = struct{}{}
-			if strings.TrimSpace(namespace.IfName) == "" {
-				return fmt.Errorf("router %q bridge %q namespace %q has empty ifname", routerName, bridge.Name, namespace.Name)
-			}
-			if namespace.MAC != "" {
-				if _, err := net.ParseMAC(namespace.MAC); err != nil {
-					return fmt.Errorf("router %q bridge %q namespace %q has invalid mac %q: %w", routerName, bridge.Name, namespace.Name, namespace.MAC, err)
-				}
-			}
-			for _, address := range namespace.Addresses {
-				if _, _, err := net.ParseCIDR(address); err != nil {
-					return fmt.Errorf("router %q bridge %q namespace %q has invalid address %q: %w", routerName, bridge.Name, namespace.Name, address, err)
-				}
-			}
-			if namespace.DefaultVia != "" && net.ParseIP(namespace.DefaultVia) == nil {
-				return fmt.Errorf("router %q bridge %q namespace %q has invalid defaultVia %q", routerName, bridge.Name, namespace.Name, namespace.DefaultVia)
+			if err := validateLinuxNamespace(routerName, fmt.Sprintf("bridge %q", bridge.Name), namespace, namespaceNames); err != nil {
+				return err
 			}
 		}
 	}
 
+	return nil
+}
+
+func claimLinuxDevice(routerName string, devices map[string]string, name, kind string) error {
+	trimmed := strings.TrimSpace(name)
+	if owner, ok := devices[trimmed]; ok {
+		return fmt.Errorf("router %q reuses linux device name %q across %s and %s", routerName, trimmed, owner, kind)
+	}
+	devices[trimmed] = kind
+	return nil
+}
+
+func validateLinuxLinkAttrs(routerName, owner, mac, addrGenMode string, addresses []string) error {
+	if mac != "" {
+		if _, err := net.ParseMAC(mac); err != nil {
+			return fmt.Errorf("router %q %s has invalid mac %q: %w", routerName, owner, mac, err)
+		}
+	}
+	if err := validateAddrGenMode(routerName, owner, addrGenMode); err != nil {
+		return err
+	}
+	for _, address := range addresses {
+		if _, _, err := net.ParseCIDR(address); err != nil {
+			return fmt.Errorf("router %q %s has invalid address %q: %w", routerName, owner, address, err)
+		}
+	}
+	return nil
+}
+
+func validateLinuxNamespace(routerName, owner string, namespace Namespace, namespaceNames map[string]string) error {
+	if strings.TrimSpace(namespace.Name) == "" {
+		return fmt.Errorf("router %q %s has a namespace with empty name", routerName, owner)
+	}
+	if previousOwner, ok := namespaceNames[namespace.Name]; ok {
+		return fmt.Errorf("router %q reuses namespace name %q across %s and %s", routerName, namespace.Name, previousOwner, owner)
+	}
+	namespaceNames[namespace.Name] = owner
+	if strings.TrimSpace(namespace.IfName) == "" {
+		return fmt.Errorf("router %q %s namespace %q has empty ifname", routerName, owner, namespace.Name)
+	}
+	if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("%s namespace %q", owner, namespace.Name), namespace.MAC, "", namespace.Addresses); err != nil {
+		return err
+	}
+	if namespace.DefaultVia != "" && net.ParseIP(namespace.DefaultVia) == nil {
+		return fmt.Errorf("router %q %s namespace %q has invalid defaultVia %q", routerName, owner, namespace.Name, namespace.DefaultVia)
+	}
+	return nil
+}
+
+func validateAddrGenMode(routerName, owner, addrGenMode string) error {
+	if strings.TrimSpace(addrGenMode) == "" {
+		return nil
+	}
+	if _, ok := addrGenModes[addrGenMode]; !ok {
+		return fmt.Errorf("router %q %s has invalid addrgenmode %q", routerName, owner, addrGenMode)
+	}
 	return nil
 }
 
@@ -609,16 +745,51 @@ func defaultRouterSysctls() map[string]string {
 
 func copyLinux(linux Linux) Linux {
 	result := Linux{
-		Routes:  append([]Route(nil), linux.Routes...),
-		Bridges: make([]Bridge, 0, len(linux.Bridges)),
+		VRFs:       append([]VRF(nil), linux.VRFs...),
+		Interfaces: make([]Interface, 0, len(linux.Interfaces)),
+		Veths:      make([]Veth, 0, len(linux.Veths)),
+		Routes:     append([]Route(nil), linux.Routes...),
+		Bridges:    make([]Bridge, 0, len(linux.Bridges)),
+	}
+	for _, iface := range linux.Interfaces {
+		result.Interfaces = append(result.Interfaces, Interface{
+			Name:        iface.Name,
+			Master:      iface.Master,
+			MAC:         iface.MAC,
+			AddrGenMode: iface.AddrGenMode,
+			Addresses:   append([]string(nil), iface.Addresses...),
+		})
+	}
+	for _, veth := range linux.Veths {
+		copyVeth := Veth{
+			Name:        veth.Name,
+			Peer:        veth.Peer,
+			Master:      veth.Master,
+			MAC:         veth.MAC,
+			AddrGenMode: veth.AddrGenMode,
+			Addresses:   append([]string(nil), veth.Addresses...),
+		}
+		if veth.Namespace != nil {
+			copyVeth.Namespace = &Namespace{
+				Name:       veth.Namespace.Name,
+				IfName:     veth.Namespace.IfName,
+				MAC:        veth.Namespace.MAC,
+				Addresses:  append([]string(nil), veth.Namespace.Addresses...),
+				DefaultVia: veth.Namespace.DefaultVia,
+			}
+		}
+		result.Veths = append(result.Veths, copyVeth)
 	}
 	for _, bridge := range linux.Bridges {
 		copyBridge := Bridge{
-			Name:       bridge.Name,
-			Addresses:  append([]string(nil), bridge.Addresses...),
-			Interfaces: append([]string(nil), bridge.Interfaces...),
-			VXLANS:     append([]VXLAN(nil), bridge.VXLANS...),
-			Namespaces: make([]Namespace, 0, len(bridge.Namespaces)),
+			Name:        bridge.Name,
+			Master:      bridge.Master,
+			MAC:         bridge.MAC,
+			AddrGenMode: bridge.AddrGenMode,
+			Addresses:   append([]string(nil), bridge.Addresses...),
+			Interfaces:  append([]string(nil), bridge.Interfaces...),
+			VXLANS:      append([]VXLAN(nil), bridge.VXLANS...),
+			Namespaces:  make([]Namespace, 0, len(bridge.Namespaces)),
 		}
 		for _, namespace := range bridge.Namespaces {
 			copyBridge.Namespaces = append(copyBridge.Namespaces, Namespace{

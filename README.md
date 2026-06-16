@@ -174,12 +174,33 @@ routers:
     sysctls:                     # optional router-local sysctls merged after built-ins and lab.defaults.sysctls
       net.ipv4.conf.eth1.rp_filter: "0"
     linux:                       # optional router-local Linux dataplane objects built after links and loopbacks
+      vrfs:
+        - name: tenant           # optional Linux VRF device
+          table: 1100
+      interfaces:
+        - name: eth3             # optional existing interface to re-home or address
+          master: tenant
+          addresses: [10.20.20.1/24]
+      veths:
+        - name: lan0             # optional router-local veth pair
+          peer: host0
+          master: tenant
+          addresses: [10.10.10.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            mac: 02:00:00:00:10:11
+            addresses: [10.10.10.11/24]
+            defaultVia: 10.10.10.1
       routes:
         - to: 10.255.0.2/32      # optional static routes in the router namespace
           via: 192.0.2.1         # optional; set via, dev, or both
           dev: eth1
       bridges:
         - name: br10             # optional Linux bridge device
+          master: tenant
+          mac: 02:00:00:00:10:01
+          addrgenmode: none
           addresses: [10.10.10.1/24]
           interfaces: [eth2]     # optional existing router interfaces enslaved to the bridge
           vxlans:
@@ -187,6 +208,10 @@ routers:
               vni: 100
               local: 10.255.0.1
               nolearning: true
+              addrgenmode: none
+              bridgeSlave:       # optional bridge_slave settings after enslaving the VXLAN
+                neighSuppress: true
+                learning: false
           namespaces:
             - name: host
               ifname: eth0

@@ -278,12 +278,39 @@ func TestValidateRejectsEmptyCommandToken(t *testing.T) {
 func TestValidateAcceptsLinuxDataplaneConfig(t *testing.T) {
 	t.Parallel()
 
+	learningOff := false
+	neighOn := true
 	topology := &Topology{
 		APIVersion: APIVersion,
 		Lab:        Lab{Name: "linux-lab"},
 		Routers: map[string]Router{
 			"r1": {
 				Linux: Linux{
+					VRFs: []VRF{
+						{Name: "tenant", Table: 1100},
+					},
+					Interfaces: []Interface{
+						{
+							Name:      "eth3",
+							Master:    "tenant",
+							Addresses: []string{"10.20.10.1/24"},
+						},
+					},
+					Veths: []Veth{
+						{
+							Name:      "lan0",
+							Peer:      "host0",
+							Master:    "tenant",
+							Addresses: []string{"10.10.10.1/24"},
+							Namespace: &Namespace{
+								Name:       "host",
+								IfName:     "eth0",
+								MAC:        "02:00:00:00:10:11",
+								Addresses:  []string{"10.10.10.11/24"},
+								DefaultVia: "10.10.10.1",
+							},
+						},
+					},
 					Routes: []Route{
 						{
 							To:  "10.255.0.2/32",
@@ -292,24 +319,22 @@ func TestValidateAcceptsLinuxDataplaneConfig(t *testing.T) {
 					},
 					Bridges: []Bridge{
 						{
-							Name:       "br10",
-							Addresses:  []string{"10.10.10.1/24"},
-							Interfaces: []string{"eth1"},
+							Name:        "br10",
+							Master:      "tenant",
+							MAC:         "02:00:00:00:10:01",
+							AddrGenMode: "none",
+							Interfaces:  []string{"eth1"},
 							VXLANS: []VXLAN{
 								{
-									Name:       "vxlan100",
-									VNI:        100,
-									Local:      "10.255.0.1",
-									NoLearning: true,
-								},
-							},
-							Namespaces: []Namespace{
-								{
-									Name:       "host",
-									IfName:     "eth0",
-									MAC:        "02:00:00:00:10:11",
-									Addresses:  []string{"10.10.10.11/24"},
-									DefaultVia: "10.10.10.1",
+									Name:        "vxlan100",
+									VNI:         100,
+									Local:       "10.255.0.1",
+									NoLearning:  true,
+									AddrGenMode: "none",
+									BridgeSlave: BridgeSlaveOptions{
+										Learning:      &learningOff,
+										NeighSuppress: &neighOn,
+									},
 								},
 							},
 						},
@@ -332,6 +357,43 @@ func TestValidateAcceptsLinuxDataplaneConfig(t *testing.T) {
 
 	if err := topology.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsInvalidLinuxAddrGenMode(t *testing.T) {
+	t.Parallel()
+
+	topology := &Topology{
+		APIVersion: APIVersion,
+		Lab:        Lab{Name: "linux-lab"},
+		Routers: map[string]Router{
+			"r1": {
+				Linux: Linux{
+					Bridges: []Bridge{
+						{
+							Name:        "br10",
+							AddrGenMode: "bad-mode",
+						},
+					},
+				},
+			},
+			"r2": {},
+		},
+		Links: []Link{
+			{
+				Name: "fabric",
+				Type: "p2p",
+				Members: []LinkMember{
+					{Router: "r1", IfName: "eth1"},
+					{Router: "r2", IfName: "eth1"},
+				},
+			},
+		},
+	}
+
+	err := topology.Validate()
+	if err == nil || !strings.Contains(err.Error(), `invalid addrgenmode`) {
+		t.Fatalf("Validate() error = %v, want invalid addrgenmode error", err)
 	}
 }
 

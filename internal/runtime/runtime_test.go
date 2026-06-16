@@ -33,6 +33,10 @@ type fakeDockerClient struct {
 	execs   [][]string
 }
 
+func boolPtr(value bool) *bool {
+	return &value
+}
+
 func (f *fakeDockerClient) CreateContainer(context.Context, docker.ContainerSpec) (string, error) {
 	return "", nil
 }
@@ -165,6 +169,21 @@ func TestVXLANCommandUsesEVPNFriendlyDefaults(t *testing.T) {
 	}
 }
 
+func TestBridgeSlaveCommandBuildsOnlyRequestedOptions(t *testing.T) {
+	t.Parallel()
+
+	command := bridgeSlaveCommand(config.VXLAN{
+		Name: "vxlan5000",
+		BridgeSlave: config.BridgeSlaveOptions{
+			NeighSuppress: boolPtr(true),
+			Learning:      boolPtr(false),
+		},
+	})
+	if got, want := strings.Join(command, "\x00"), strings.Join([]string{"ip", "link", "set", "dev", "vxlan5000", "type", "bridge_slave", "neigh_suppress", "on", "learning", "off"}, "\x00"); got != want {
+		t.Fatalf("bridgeSlaveCommand() = %#v, want %#v", command, []string{"ip", "link", "set", "dev", "vxlan5000", "type", "bridge_slave", "neigh_suppress", "on", "learning", "off"})
+	}
+}
+
 func TestHasDaemonsRequiresEveryExpectedDaemon(t *testing.T) {
 	t.Parallel()
 
@@ -176,7 +195,7 @@ func TestHasDaemonsRequiresEveryExpectedDaemon(t *testing.T) {
 	}
 }
 
-func TestConfigureLinuxBridgesNamespacesAndRoutes(t *testing.T) {
+func TestConfigureLinuxVRFsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 	t.Parallel()
 
 	fakeDocker := &fakeDockerClient{}
@@ -184,27 +203,50 @@ func TestConfigureLinuxBridgesNamespacesAndRoutes(t *testing.T) {
 	routers := map[string]config.ResolvedRouter{
 		"r1": {
 			Linux: config.Linux{
+				VRFs: []config.VRF{
+					{Name: "tenant", Table: 1100},
+				},
 				Bridges: []config.Bridge{
 					{
-						Name:       "br10",
-						Addresses:  []string{"10.10.20.1/24"},
-						Interfaces: []string{"eth2"},
+						Name:        "br5000",
+						Master:      "tenant",
+						MAC:         "02:00:00:00:50:11",
+						AddrGenMode: "none",
+						Interfaces:  []string{"eth2"},
 						VXLANS: []config.VXLAN{
 							{
-								Name:       "vxlan100",
-								VNI:        100,
-								Local:      "10.255.0.11",
-								NoLearning: true,
+								Name:        "vxlan5000",
+								VNI:         5000,
+								Local:       "10.255.0.11",
+								NoLearning:  true,
+								AddrGenMode: "none",
+								BridgeSlave: config.BridgeSlaveOptions{
+									NeighSuppress: boolPtr(true),
+									Learning:      boolPtr(false),
+								},
 							},
 						},
-						Namespaces: []config.Namespace{
-							{
-								Name:       "host",
-								IfName:     "eth0",
-								MAC:        "02:00:00:00:b0:11",
-								Addresses:  []string{"10.10.20.11/24"},
-								DefaultVia: "10.10.20.1",
-							},
+					},
+				},
+				Interfaces: []config.Interface{
+					{
+						Name:      "eth3",
+						Master:    "tenant",
+						Addresses: []string{"10.20.30.1/24"},
+					},
+				},
+				Veths: []config.Veth{
+					{
+						Name:      "lan0",
+						Peer:      "host0",
+						Master:    "tenant",
+						Addresses: []string{"10.10.20.1/24"},
+						Namespace: &config.Namespace{
+							Name:       "host",
+							IfName:     "eth0",
+							MAC:        "02:00:00:00:b0:11",
+							Addresses:  []string{"10.10.20.11/24"},
+							DefaultVia: "10.10.20.1",
 						},
 					},
 				},
@@ -228,24 +270,32 @@ func TestConfigureLinuxBridgesNamespacesAndRoutes(t *testing.T) {
 		t.Fatalf("configureLinux() error = %v", err)
 	}
 
-	hostVeth := bridgeNamespaceHostVethName("br10", "host")
-	peerVeth := bridgeNamespacePeerVethName("br10", "host")
 	want := [][]string{
-		{"ip", "link", "add", "name", "br10", "type", "bridge"},
-		{"ip", "addr", "replace", "10.10.20.1/24", "dev", "br10"},
-		{"ip", "link", "set", "dev", "br10", "up"},
-		{"ip", "link", "set", "dev", "eth2", "master", "br10"},
+		{"ip", "link", "add", "name", "tenant", "type", "vrf", "table", "1100"},
+		{"ip", "link", "set", "dev", "tenant", "up"},
+		{"ip", "link", "add", "name", "br5000", "type", "bridge"},
+		{"ip", "link", "set", "dev", "br5000", "master", "tenant"},
+		{"ip", "link", "set", "dev", "br5000", "addrgenmode", "none"},
+		{"ip", "link", "set", "dev", "br5000", "address", "02:00:00:00:50:11"},
+		{"ip", "link", "set", "dev", "br5000", "up"},
+		{"ip", "link", "set", "dev", "eth2", "master", "br5000"},
 		{"ip", "link", "set", "dev", "eth2", "up"},
-		{"ip", "link", "add", "name", "vxlan100", "type", "vxlan", "id", "100", "local", "10.255.0.11", "dstport", "4789", "nolearning"},
-		{"ip", "link", "set", "dev", "vxlan100", "master", "br10"},
-		{"ip", "link", "set", "dev", "vxlan100", "up"},
+		{"ip", "link", "add", "name", "vxlan5000", "type", "vxlan", "id", "5000", "local", "10.255.0.11", "dstport", "4789", "nolearning"},
+		{"ip", "link", "set", "dev", "vxlan5000", "master", "br5000"},
+		{"ip", "link", "set", "dev", "vxlan5000", "addrgenmode", "none"},
+		{"ip", "link", "set", "dev", "vxlan5000", "type", "bridge_slave", "neigh_suppress", "on", "learning", "off"},
+		{"ip", "link", "set", "dev", "vxlan5000", "up"},
+		{"ip", "link", "set", "dev", "eth3", "master", "tenant"},
+		{"ip", "addr", "replace", "10.20.30.1/24", "dev", "eth3"},
+		{"ip", "link", "set", "dev", "eth3", "up"},
+		{"ip", "link", "add", "name", "lan0", "type", "veth", "peer", "name", "host0"},
+		{"ip", "link", "set", "dev", "lan0", "master", "tenant"},
+		{"ip", "addr", "replace", "10.10.20.1/24", "dev", "lan0"},
+		{"ip", "link", "set", "dev", "lan0", "up"},
 		{"ip", "netns", "add", "host"},
-		{"ip", "link", "add", "name", hostVeth, "type", "veth", "peer", "name", peerVeth},
-		{"ip", "link", "set", "dev", hostVeth, "master", "br10"},
-		{"ip", "link", "set", "dev", hostVeth, "up"},
-		{"ip", "link", "set", "dev", peerVeth, "netns", "host"},
+		{"ip", "link", "set", "dev", "host0", "netns", "host"},
 		{"ip", "netns", "exec", "host", "ip", "link", "set", "dev", "lo", "up"},
-		{"ip", "netns", "exec", "host", "ip", "link", "set", "dev", peerVeth, "name", "eth0"},
+		{"ip", "netns", "exec", "host", "ip", "link", "set", "dev", "host0", "name", "eth0"},
 		{"ip", "netns", "exec", "host", "ip", "link", "set", "dev", "eth0", "address", "02:00:00:00:b0:11"},
 		{"ip", "netns", "exec", "host", "ip", "addr", "replace", "10.10.20.11/24", "dev", "eth0"},
 		{"ip", "netns", "exec", "host", "ip", "link", "set", "dev", "eth0", "up"},
