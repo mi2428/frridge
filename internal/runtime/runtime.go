@@ -488,7 +488,7 @@ func (m *Manager) seedRouters(ctx context.Context, routers map[string]config.Res
 			continue
 		}
 
-		if err := m.waitForVTYSH(ctx, container.ID); err != nil {
+		if err := m.waitForVTYSH(ctx, container.ID, frr.EnabledDaemons()); err != nil {
 			return fmt.Errorf("router %q: %w", routerName, err)
 		}
 
@@ -668,16 +668,15 @@ func (m *Manager) configureInterface(ctx context.Context, containerID, tempIfNam
 	return nil
 }
 
-// waitForVTYSH waits until vtysh can see the daemons that the generated FRR
-// files always enable, which makes subsequent seed commands and write-memory
-// calls deterministic.
-func (m *Manager) waitForVTYSH(ctx context.Context, containerID string) error {
+// waitForVTYSH waits until vtysh can see every enabled daemon, which makes
+// subsequent seed commands and write-memory calls deterministic.
+func (m *Manager) waitForVTYSH(ctx context.Context, containerID string, daemons []string) error {
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		result, err := m.docker.Exec(ctx, containerID, []string{"vtysh", "-c", "show daemons"})
 		if err == nil && result.ExitCode == 0 {
-			daemons := strings.Fields(result.Stdout)
-			if slices.Contains(daemons, "zebra") && slices.Contains(daemons, "bgpd") {
+			running := strings.Fields(result.Stdout)
+			if hasDaemons(running, daemons) {
 				return nil
 			}
 		}
@@ -693,6 +692,15 @@ func (m *Manager) waitForVTYSH(ctx context.Context, containerID string) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+func hasDaemons(running, want []string) bool {
+	for _, daemon := range want {
+		if !slices.Contains(running, daemon) {
+			return false
+		}
+	}
+	return true
 }
 
 // renderVTYSH uses a quoted heredoc so the user's multiline config is passed to

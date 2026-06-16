@@ -9,12 +9,18 @@ import (
 	"io"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 )
 
 // ErrInstanceNotFound reports that the requested Multipass instance does not
 // exist yet.
 var ErrInstanceNotFound = errors.New("multipass instance not found")
+
+const (
+	outputMarker = "__FRRIDGE_OUTPUT_BEGIN__"
+	statusMarker = "__FRRIDGE_EXIT_STATUS__="
+)
 
 type systemCLI struct{}
 
@@ -102,10 +108,14 @@ func (c *systemCLI) Transfer(ctx context.Context, source, target string) error {
 }
 
 func (c *systemCLI) Exec(ctx context.Context, instance string, spec ExecSpec) error {
+	if spec.Stdin == nil {
+		return c.execBuffered(ctx, instance, spec)
+	}
+
 	var stderr bytes.Buffer
 
-	cmd := exec.CommandContext(ctx, "multipass", buildExecArgs(instance, spec)...)
-	cmd.Stdin = spec.Stdin
+	cmd := exec.CommandContext(ctx, "multipass", "shell", instance)
+	cmd.Stdin = shellInput(spec, false, false)
 	if spec.Stdout != nil {
 		cmd.Stdout = spec.Stdout
 	} else {
@@ -117,7 +127,7 @@ func (c *systemCLI) Exec(ctx context.Context, instance string, spec ExecSpec) er
 		cmd.Stderr = &stderr
 	}
 	if err := cmd.Run(); err != nil {
-		return commandError("multipass exec", err, stderr.String())
+		return commandError("multipass shell", err, stderr.String())
 	}
 	return nil
 }
@@ -126,14 +136,22 @@ func (c *systemCLI) Output(ctx context.Context, instance string, spec ExecSpec) 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	cmd := exec.CommandContext(ctx, "multipass", buildExecArgs(instance, spec)...)
-	cmd.Stdin = spec.Stdin
+	cmd := exec.CommandContext(ctx, "multipass", "shell", instance)
+	cmd.Stdin = shellInput(spec, true, true)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", commandError("multipass exec", err, stderr.String())
+		return "", commandError("multipass shell", err, stderr.String())
 	}
-	return stdout.String(), nil
+
+	output, exitCode, err := parseShellOutput(stdout.String())
+	if err != nil {
+		return "", err
+	}
+	if exitCode != 0 {
+		return "", commandError("multipass shell", fmt.Errorf("guest command exited with status %d", exitCode), stderr.String())
+	}
+	return output, nil
 }
 
 func (c *systemCLI) output(ctx context.Context, args ...string) (string, string, error) {
@@ -147,41 +165,82 @@ func (c *systemCLI) output(ctx context.Context, args ...string) (string, string,
 	return stdout.String(), stderr.String(), err
 }
 
-func buildExecArgs(instance string, spec ExecSpec) []string {
-	command := append([]string(nil), spec.Command...)
-	if spec.Dir == "" && len(spec.Env) == 0 {
-		return append([]string{"exec", instance, "--"}, command...)
-	}
-	if spec.Dir == "" {
-		spec.Dir = "."
+func (c *systemCLI) execBuffered(ctx context.Context, instance string, spec ExecSpec) error {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd := exec.CommandContext(ctx, "multipass", "shell", instance)
+	cmd.Stdin = shellInput(spec, true, true)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return commandError("multipass shell", err, stderr.String())
 	}
 
-	exports := sortedEnvPairs(spec.Env)
-	args := []string{
-		"exec",
-		instance,
-		"--",
-		"bash",
-		"-lc",
-		`set -euo pipefail
-cd "$1"
-shift
-while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
-	export "$1"
-	shift
-done
-shift
-exec "$@"`,
-		"bash",
-		spec.Dir,
+	output, exitCode, err := parseShellOutput(stdout.String())
+	if err != nil {
+		return err
 	}
-	args = append(args, exports...)
-	args = append(args, "--")
-	args = append(args, command...)
-	return args
+	stderrText := stderr.String()
+	if spec.Stdout != nil && output != "" {
+		if _, err := io.WriteString(spec.Stdout, output); err != nil {
+			return fmt.Errorf("write multipass stdout: %w", err)
+		}
+	}
+	if spec.Stderr != nil && stderr.Len() > 0 {
+		if _, err := io.Copy(spec.Stderr, &stderr); err != nil {
+			return fmt.Errorf("write multipass stderr: %w", err)
+		}
+	}
+	if exitCode != 0 {
+		return commandError("multipass shell", fmt.Errorf("guest command exited with status %d", exitCode), stderrText)
+	}
+	return nil
 }
 
-func sortedEnvPairs(env map[string]string) []string {
+func shellInput(spec ExecSpec, markOutput, markStatus bool) io.Reader {
+	script := buildShellScript(spec, markOutput, markStatus)
+	if spec.Stdin == nil {
+		return strings.NewReader(script)
+	}
+	return io.MultiReader(strings.NewReader(script), spec.Stdin)
+}
+
+func buildShellScript(spec ExecSpec, markOutput, markStatus bool) string {
+	var builder strings.Builder
+	builder.WriteString("set -euo pipefail\n")
+	if strings.TrimSpace(spec.Dir) != "" {
+		builder.WriteString("cd ")
+		builder.WriteString(shellQuote(spec.Dir))
+		builder.WriteByte('\n')
+	}
+	for _, key := range sortedEnvKeys(spec.Env) {
+		builder.WriteString("export ")
+		builder.WriteString(key)
+		builder.WriteByte('=')
+		builder.WriteString(shellQuote(spec.Env[key]))
+		builder.WriteByte('\n')
+	}
+	if markOutput {
+		builder.WriteString("printf ")
+		builder.WriteString(shellQuote(outputMarker + "\\n"))
+		builder.WriteByte('\n')
+	}
+	builder.WriteString("set +e\n")
+	builder.WriteString(shellJoin(spec.Command))
+	builder.WriteString("\nstatus=$?\n")
+	if markStatus {
+		builder.WriteString("printf ")
+		builder.WriteString(shellQuote(statusMarker + "%s\\n"))
+		builder.WriteString(" \"$status\"\n")
+		builder.WriteString("exit 0\n")
+		return builder.String()
+	}
+	builder.WriteString("exit \"$status\"\n")
+	return builder.String()
+}
+
+func sortedEnvKeys(env map[string]string) []string {
 	if len(env) == 0 {
 		return nil
 	}
@@ -192,11 +251,44 @@ func sortedEnvPairs(env map[string]string) []string {
 	}
 	slices.Sort(keys)
 
-	pairs := make([]string, 0, len(keys))
-	for _, key := range keys {
-		pairs = append(pairs, key+"="+env[key])
+	return keys
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
 	}
-	return pairs
+	return strings.Join(quoted, " ")
+}
+
+func stripOutputBanner(output string) string {
+	_, rest, ok := strings.Cut(output, outputMarker+"\n")
+	if ok {
+		return rest
+	}
+	return output
+}
+
+func parseShellOutput(output string) (string, int, error) {
+	output = stripOutputBanner(output)
+	index := strings.LastIndex(output, statusMarker)
+	if index == -1 {
+		return output, 0, nil
+	}
+
+	content := output[:index]
+	statusText := output[index+len(statusMarker):]
+	statusText = strings.TrimSpace(statusText)
+	exitCode, err := strconv.Atoi(statusText)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse multipass guest exit status %q: %w", statusText, err)
+	}
+	return content, exitCode, nil
 }
 
 func looksLikeInstanceNotFound(stderr string) bool {

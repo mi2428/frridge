@@ -151,6 +151,17 @@ func TestVXLANCommandUsesEVPNFriendlyDefaults(t *testing.T) {
 	}
 }
 
+func TestHasDaemonsRequiresEveryExpectedDaemon(t *testing.T) {
+	t.Parallel()
+
+	if !hasDaemons([]string{"zebra", "bgpd", "ospfd"}, []string{"zebra", "bgpd"}) {
+		t.Fatalf("hasDaemons() = false, want true when all daemons are present")
+	}
+	if hasDaemons([]string{"zebra", "bgpd"}, []string{"zebra", "bgpd", "ospf6d"}) {
+		t.Fatalf("hasDaemons() = true, want false when one daemon is missing")
+	}
+}
+
 func TestConfigureLinuxBridgesNamespacesAndRoutes(t *testing.T) {
 	t.Parallel()
 

@@ -11,6 +11,21 @@ import (
 
 const seedMarkerName = ".seeded-vtysh"
 
+var defaultEnabledDaemons = []string{
+	"zebra",
+	"bgpd",
+	"ospfd",
+	"ospf6d",
+	"isisd",
+	"staticd",
+}
+
+// EnabledDaemons returns the FRR daemons that generated labs enable by
+// default.
+func EnabledDaemons() []string {
+	return append([]string(nil), defaultEnabledDaemons...)
+}
+
 // PrepareResult describes the generated file locations for one router and
 // whether first-boot vtysh seeding still needs to run.
 type PrepareResult struct {
@@ -28,8 +43,8 @@ func PrepareRouterFiles(routerDir, hostname string, reseed bool) (PrepareResult,
 	}
 
 	markerPath := filepath.Join(routerDir, seedMarkerName)
-	if err := writeIfMissing(filepath.Join(configDir, "daemons"), []byte(DefaultDaemons())); err != nil {
-		return PrepareResult{}, err
+	if err := os.WriteFile(filepath.Join(configDir, "daemons"), []byte(DefaultDaemons()), 0o640); err != nil {
+		return PrepareResult{}, fmt.Errorf("write daemons: %w", err)
 	}
 	if err := writeIfMissing(filepath.Join(configDir, "vtysh.conf"), []byte(DefaultVtyshConf())); err != nil {
 		return PrepareResult{}, err
@@ -76,15 +91,30 @@ func MarkSeeded(markerPath string) error {
 }
 
 // DefaultDaemons returns the FRR daemons file used for generated labs.
+//
+// Common routing daemons stay enabled by default so fresh skeleton labs can be
+// explored interactively from vtysh without extra YAML boilerplate.
 func DefaultDaemons() string {
-	return strings.TrimLeft(`
-zebra=yes
-bgpd=yes
-ospfd=no
-ospf6d=no
+	enabledSet := make(map[string]bool, len(defaultEnabledDaemons))
+	for _, daemon := range defaultEnabledDaemons {
+		enabledSet[daemon] = true
+	}
+
+	yn := func(name string) string {
+		if enabledSet[name] {
+			return "yes"
+		}
+		return "no"
+	}
+
+	return fmt.Sprintf(strings.TrimLeft(`
+zebra=%s
+bgpd=%s
+ospfd=%s
+ospf6d=%s
 ripd=no
 ripngd=no
-isisd=no
+isisd=%s
 pimd=no
 pim6d=no
 ldpd=no
@@ -93,6 +123,7 @@ eigrpd=no
 babeld=no
 sharpd=no
 pbrd=no
+staticd=%s
 bfdd=no
 fabricd=no
 pathd=no
@@ -122,7 +153,7 @@ vrrpd_options="  -A 127.0.0.1"
 pathd_options="  -A 127.0.0.1"
 
 frr_profile="datacenter"
-	`, "\n")
+	`, "\n"), yn("zebra"), yn("bgpd"), yn("ospfd"), yn("ospf6d"), yn("isisd"), yn("staticd"))
 }
 
 // DefaultVtyshConf enables integrated configuration mode for generated labs.

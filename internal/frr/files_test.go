@@ -69,6 +69,12 @@ func TestDefaultDaemonsMatchesFRRContainerExpectations(t *testing.T) {
 
 	daemons := DefaultDaemons()
 	for _, want := range []string{
+		"zebra=yes",
+		"bgpd=yes",
+		"ospfd=yes",
+		"ospf6d=yes",
+		"isisd=yes",
+		"staticd=yes",
 		"vtysh_enable=yes",
 		`zebra_options="  -A 127.0.0.1 -s 90000000"`,
 		`bgpd_options="   -A 127.0.0.1"`,

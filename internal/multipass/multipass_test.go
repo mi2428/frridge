@@ -327,22 +327,60 @@ func TestMapGuestArch(t *testing.T) {
 	}
 }
 
-func TestBuildExecArgsWrapsDirAndEnv(t *testing.T) {
+func TestBuildShellScriptWrapsDirAndEnv(t *testing.T) {
 	t.Parallel()
 
-	args := buildExecArgs("mp-lab", ExecSpec{
+	script := buildShellScript(ExecSpec{
 		Command: []string{"docker", "ps"},
 		Dir:     "/work",
 		Env: map[string]string{
 			"B": "2",
 			"A": "1",
 		},
-	})
+	}, false, false)
 
-	if got, want := args[:4], []string{"exec", "mp-lab", "--", "bash"}; strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("args prefix = %#v, want %#v", got, want)
+	for _, want := range []string{
+		"set -euo pipefail\n",
+		"cd '/work'\n",
+		"export A='1'\n",
+		"export B='2'\n",
+		"set +e\n'docker' 'ps'\nstatus=$?\nexit \"$status\"\n",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("buildShellScript() missing %q in %q", want, script)
+		}
 	}
-	if !slices.Equal(args[len(args)-6:], []string{"/work", "A=1", "B=2", "--", "docker", "ps"}) {
-		t.Fatalf("args suffix = %#v, want wrapped command", args)
+}
+
+func TestStripOutputBannerReturnsOnlyCommandOutput(t *testing.T) {
+	t.Parallel()
+
+	output := "banner\n" + outputMarker + "\naarch64\n"
+	if got, want := stripOutputBanner(output), "aarch64\n"; got != want {
+		t.Fatalf("stripOutputBanner() = %q, want %q", got, want)
+	}
+}
+
+func TestParseShellOutputReturnsExitStatus(t *testing.T) {
+	t.Parallel()
+
+	output, exitCode, err := parseShellOutput("banner\n" + outputMarker + "\naarch64\n" + statusMarker + "17\n")
+	if err != nil {
+		t.Fatalf("parseShellOutput() error = %v", err)
+	}
+	if output != "aarch64\n" {
+		t.Fatalf("parseShellOutput() output = %q, want %q", output, "aarch64\n")
+	}
+	if exitCode != 17 {
+		t.Fatalf("parseShellOutput() exitCode = %d, want 17", exitCode)
+	}
+}
+
+func TestFirstFrridgeCommandSkipsGlobalFlags(t *testing.T) {
+	t.Parallel()
+
+	args := []string{"--file", "/guest/lab.yaml", "console", "--shell", "r1"}
+	if got, want := firstFrridgeCommand(args), "console"; got != want {
+		t.Fatalf("firstFrridgeCommand() = %q, want %q", got, want)
 	}
 }

@@ -220,7 +220,7 @@ func (m *Manager) Frridge(ctx context.Context, req Request, args []string) error
 	return m.cli.Exec(ctx, env.InstanceName, ExecSpec{
 		Command: command,
 		Dir:     env.GuestHostDir,
-		Stdin:   os.Stdin,
+		Stdin:   frridgeInput(args),
 		Stdout:  os.Stdout,
 		Stderr:  os.Stderr,
 	})
@@ -505,4 +505,26 @@ func mapGuestArch(raw string) (string, error) {
 func shortHash(input string) string {
 	sum := sha256.Sum256([]byte(input))
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+func frridgeInput(args []string) io.Reader {
+	if firstFrridgeCommand(args) == "console" {
+		return os.Stdin
+	}
+	return nil
+}
+
+func firstFrridgeCommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--file", "-f":
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "-") {
+			continue
+		}
+		return args[i]
+	}
+	return ""
 }
