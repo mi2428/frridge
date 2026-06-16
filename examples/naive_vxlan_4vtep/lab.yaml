@@ -1,0 +1,146 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: naive-vxlan-4vtep
+  workdir: .frridge
+  defaults:
+    image: nicolaka/netshoot:latest
+
+routers:
+  tep1:
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 172.16.100.11
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:10:00:11
+              addresses: [10.10.100.11/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.12
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.13
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.14
+
+  tep2:
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 172.16.100.12
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:10:00:12
+              addresses: [10.10.100.12/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.11
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.13
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.14
+
+  tep3:
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 172.16.100.13
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:10:00:13
+              addresses: [10.10.100.13/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.11
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.12
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.14
+
+  tep4:
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 172.16.100.14
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:10:00:14
+              addresses: [10.10.100.14/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.11
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.12
+          bridge fdb append 00:00:00:00:00:00 dev vxlan100 dst 172.16.100.13
+
+links:
+  - name: underlay
+    type: bridge
+    members:
+      - router: tep1
+        ifname: eth1
+        ipv4: 172.16.100.11/24
+      - router: tep2
+        ifname: eth1
+        ipv4: 172.16.100.12/24
+      - router: tep3
+        ifname: eth1
+        ipv4: 172.16.100.13/24
+      - router: tep4
+        ifname: eth1
+        ipv4: 172.16.100.14/24
+
+pings:
+  - name: tep1-to-tep2
+    from:
+      router: tep1
+      namespace: host
+      address: 10.10.100.11
+    to: 10.10.100.12
+    count: 5
+
+  - name: tep1-to-tep3
+    from:
+      router: tep1
+      namespace: host
+      address: 10.10.100.11
+    to: 10.10.100.13
+    count: 5
+
+  - name: tep1-to-tep4
+    from:
+      router: tep1
+      namespace: host
+      address: 10.10.100.11
+    to: 10.10.100.14
+    count: 5
+
+  - name: tep4-to-tep2
+    from:
+      router: tep4
+      namespace: host
+      address: 10.10.100.14
+    to: 10.10.100.12
+    count: 5
