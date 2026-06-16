@@ -1,8 +1,10 @@
 package config
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -228,5 +230,56 @@ func TestValidateRejectsPingWithoutSourceRouter(t *testing.T) {
 	err := topology.Validate()
 	if err == nil || !strings.Contains(err.Error(), `undefined source router "missing"`) {
 		t.Fatalf("Validate() error = %v, want undefined source router error", err)
+	}
+}
+
+func TestExampleLabsLoad(t *testing.T) {
+	t.Parallel()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	root := filepath.Clean(filepath.Join(wd, "..", ".."))
+	examplesDir := filepath.Join(root, "examples")
+
+	var labs []string
+	err = filepath.WalkDir(examplesDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Name() == "lab.yaml" {
+			labs = append(labs, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkDir(%q) error = %v", examplesDir, err)
+	}
+	if len(labs) == 0 {
+		t.Fatalf("no example labs found below %q", examplesDir)
+	}
+
+	slices.Sort(labs)
+	for _, path := range labs {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			t.Fatalf("Rel(%q) error = %v", path, err)
+		}
+
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+
+			topology, err := LoadFile(path)
+			if err != nil {
+				t.Fatalf("LoadFile(%q) error = %v", path, err)
+			}
+			if _, err := topology.Digest(); err != nil {
+				t.Fatalf("Digest(%q) error = %v", path, err)
+			}
+		})
 	}
 }

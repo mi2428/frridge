@@ -1,0 +1,114 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: skeleton-leaf-spine-3x2
+  workdir: .frridge
+  defaults:
+    image: frridge-frr:latest
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.rp_filter: "0"
+
+routers:
+  sp1:
+    loopbacks:
+      - 10.255.17.1/32
+  sp2:
+    loopbacks:
+      - 10.255.17.2/32
+  lf1:
+    loopbacks:
+      - 10.255.17.11/32
+  lf2:
+    loopbacks:
+      - 10.255.17.12/32
+  lf3:
+    loopbacks:
+      - 10.255.17.13/32
+
+links:
+  - name: lf1-sp1
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth1
+        ipv4: 10.0.17.0/31
+      - router: sp1
+        ifname: eth1
+        ipv4: 10.0.17.1/31
+
+  - name: lf1-sp2
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth2
+        ipv4: 10.0.17.2/31
+      - router: sp2
+        ifname: eth1
+        ipv4: 10.0.17.3/31
+
+  - name: lf2-sp1
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth1
+        ipv4: 10.0.17.4/31
+      - router: sp1
+        ifname: eth2
+        ipv4: 10.0.17.5/31
+
+  - name: lf2-sp2
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth2
+        ipv4: 10.0.17.6/31
+      - router: sp2
+        ifname: eth2
+        ipv4: 10.0.17.7/31
+
+  - name: lf3-sp1
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth1
+        ipv4: 10.0.17.8/31
+      - router: sp1
+        ifname: eth3
+        ipv4: 10.0.17.9/31
+
+  - name: lf3-sp2
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth2
+        ipv4: 10.0.17.10/31
+      - router: sp2
+        ifname: eth3
+        ipv4: 10.0.17.11/31
+
+pings:
+  - name: lf1-to-sp1
+    from:
+      router: lf1
+    to: 10.0.17.1
+  - name: lf1-to-sp2
+    from:
+      router: lf1
+    to: 10.0.17.3
+  - name: lf2-to-sp1
+    from:
+      router: lf2
+    to: 10.0.17.5
+  - name: lf2-to-sp2
+    from:
+      router: lf2
+    to: 10.0.17.7
+  - name: lf3-to-sp1
+    from:
+      router: lf3
+    to: 10.0.17.9
+  - name: lf3-to-sp2
+    from:
+      router: lf3
+    to: 10.0.17.11
