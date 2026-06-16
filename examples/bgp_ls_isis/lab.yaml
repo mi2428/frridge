@@ -3,8 +3,6 @@ apiVersion: frridge/v1alpha1
 lab:
   name: bgp-ls-isis
   workdir: .frridge
-  defaults:
-    image: frridge-frr:source
 
 routers:
   r1:

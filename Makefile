@@ -111,8 +111,8 @@ check: ## Run formatting, lint, and unit tests
 clean: ## Remove local build artifacts
 	@rm -rf "$(BINDIR)" "$(DISTDIR)"
 
-.PHONY: image.source
-image.source: ## Build the source-built FRR image used by examples that need current FRR
+.PHONY: image
+image: ## Build the companion FRR image used by the built-in defaults
 	@docker_cmd() { \
 		if "$(DOCKER)" info >/dev/null 2>&1; then \
 			"$(DOCKER)" "$$@"; \
@@ -120,11 +120,10 @@ image.source: ## Build the source-built FRR image used by examples that need cur
 			sudo "$(DOCKER)" "$$@"; \
 		fi; \
 	}; \
-	docker_cmd build \
-		-f docker/frr/source.Dockerfile \
+	docker_cmd buildx build --load \
 		--build-arg FRR_GIT_REF="$(if $(FRR_GIT_REF),$(FRR_GIT_REF),master)" \
 		--build-arg LIBYANG_GIT_REF="$(if $(LIBYANG_GIT_REF),$(LIBYANG_GIT_REF),v2.1.148)" \
-		-t frridge-frr:source \
+		-t frridge-frr:latest \
 		.
 
 ##@ Multipass

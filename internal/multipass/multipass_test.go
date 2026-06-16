@@ -305,7 +305,7 @@ func TestManagerPrepareBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 			continue
 		}
 		script, ok := bashScript(spec)
-		if ok && strings.Contains(script, "docker build -t \"$1\" .") {
+		if ok && strings.Contains(script, "docker buildx build --load -t \"$1\" .") {
 			found = true
 			break
 		}

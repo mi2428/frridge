@@ -6,7 +6,12 @@ mods_pkg="linux-modules-extra-$(uname -r)"
 packages=()
 
 if ! command -v docker >/dev/null 2>&1; then
-	packages+=(docker.io ca-certificates)
+	packages+=(docker.io docker-buildx ca-certificates)
+fi
+
+if command -v docker >/dev/null 2>&1 &&
+	! docker buildx version >/dev/null 2>&1; then
+	packages+=(docker-buildx)
 fi
 
 if ! command -v make >/dev/null 2>&1; then

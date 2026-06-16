@@ -1,23 +1,20 @@
 # BGP-LS over IS-IS
 
 This example builds a 3-router IS-IS level-2 line and one BGP-LS collector.
-`lab.yaml` lets `r2` learn the IS-IS topology, export the IS-IS traffic-engineering
-database to bgpd, and then advertise that topology to `collector` with the
-BGP link-state address family.
+`lab.yaml` uses the built-in `frridge-frr:latest` image, which now builds the
+latest FRR source from the repo-root `Dockerfile`.
 
-Before starting the lab, build the source-based FRR image that includes the
-BGP-LS CLI surface used by this example.
-
-On a Linux host that runs `frridge` directly:
+Before starting the lab on a Linux host, build or refresh that companion image:
 
 ```console
-$ make image.source
+$ make image
 ```
 
-When using `frridge-mp` from macOS, run the same build inside the guest first:
+When using `frridge-mp` from macOS, the guest auto-builds the image if it is
+missing. To refresh it explicitly, run:
 
 ```console
-$ ./bin/frridge-mp --repo-dir "$PWD" --host-dir "$PWD" exec -- make image.source
+$ ./bin/frridge-mp --repo-dir "$PWD" --host-dir "$PWD" exec -- make image
 ```
 
 ## Topology

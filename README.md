@@ -6,18 +6,21 @@ A Linux-first FRR lab runner that creates router containers, wires them together
 
 ### Build from source
 
-Install Go and Docker first, then build and install the binaries with `make install`.
+Install Go and Docker with `buildx` support first, then build and install the
+binaries with `make install`.
 By default, the binaries are installed to `~/.local/bin/frridge` and `~/.local/bin/frridge-mp`.
 Set `INSTALL_BINDIR` if you want to install them somewhere else.
 
 ```console
 $ git clone git@github.com:mi2428/frridge.git
 $ make -C frridge install
-$ docker build -t frridge-frr:latest ./frridge
+$ make -C frridge image
 ```
 
-The bundled `Dockerfile` is optional.
-You can also point the topology at `frrouting/frr:<tag>` or another image that already contains FRR and `vtysh`.
+The bundled `Dockerfile` builds the default `frridge-frr:latest` companion
+image from the latest FRR source.
+You can still point a topology at `frrouting/frr:<tag>` or another image that
+already contains FRR and `vtysh`.
 
 >[!TIP]
 > Prebuilt tarballs are also available from GitHub Releases for macOS and Linux, with amd64 and arm64 builds for each platform.

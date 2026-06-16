@@ -324,7 +324,7 @@ func (m *Manager) ensureGuestImage(ctx context.Context, env Environment) error {
 	const script = `
 set -euo pipefail
 if ! sudo docker image inspect "$1" >/dev/null 2>&1; then
-  sudo docker build -t "$1" .
+  sudo docker buildx build --load -t "$1" .
 fi
 `
 
