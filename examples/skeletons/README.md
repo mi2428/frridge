@@ -4,6 +4,13 @@ These labs stop at the point where the containers exist, the links are wired,
 loopbacks are configured, and the underlay IPv4 plan is already applied.
 They do **not** seed any FRR routing config.
 
+They intentionally use `frridge-frr:latest`, matching the rest of the
+repository's FRR labs.
+On Multipass, `frridge-mp ensure` prepares that image inside the guest so a
+fresh VM can still run these labs directly.
+They also keep `lab.defaults.privileged: true`, so interface setup and FRR
+daemon startup behave the same way as the other examples.
+
 Use them as a kit for `vtysh` practice:
 
 - open a router with `frridge console <router> -f ...`

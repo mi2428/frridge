@@ -5,6 +5,7 @@ lab:
   workdir: .frridge
   defaults:
     image: frridge-frr:latest
+    privileged: true
     sysctls:
       net.ipv4.ip_forward: "1"
       net.ipv4.conf.all.rp_filter: "0"

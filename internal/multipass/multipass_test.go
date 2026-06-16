@@ -3,6 +3,7 @@ package multipass
 import (
 	"context"
 	"maps"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -249,6 +250,58 @@ func TestManagerFrridgeWrapsGuestBinaryAndWorkDir(t *testing.T) {
 	}
 	if got, want := last.Dir, path.Join(defaultGuestMountRoot, shortHash(hostDir)); got != want {
 		t.Fatalf("last.Dir = %q, want %q", got, want)
+	}
+}
+
+func TestManagerEnsureBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(Dockerfile) error = %v", err)
+	}
+
+	hostDir := t.TempDir()
+	cli := &fakeCLI{
+		info: Info{
+			State:  "Running",
+			Mounts: make(map[string]string),
+		},
+		arch: "x86_64\n",
+	}
+	builder := &fakeBuilder{
+		result: BuildResult{
+			ID:   "digest-amd64",
+			Path: filepath.Join(t.TempDir(), "frridge"),
+		},
+	}
+	manager := NewManager(cli, builder)
+
+	if _, err := manager.Ensure(context.Background(), Request{
+		RepoDir: repoDir,
+		HostDir: hostDir,
+		Instance: Instance{
+			Name: "mp-lab",
+		},
+	}); err != nil {
+		t.Fatalf("Ensure() error = %v", err)
+	}
+
+	found := false
+	for _, spec := range cli.execs {
+		if spec.Dir != path.Join(defaultGuestMountRoot, shortHash(repoDir)) {
+			continue
+		}
+		if len(spec.Command) < 3 {
+			continue
+		}
+		if spec.Command[0] == "bash" && spec.Command[1] == "-lc" && strings.Contains(spec.Command[2], "docker build -t \"$1\" .") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Ensure() did not run guest image bootstrap command: %#v", cli.execs)
 	}
 }
 

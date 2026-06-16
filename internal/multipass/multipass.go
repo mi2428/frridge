@@ -31,6 +31,7 @@ const (
 	defaultGuestMountRoot  = "/home/ubuntu/.local/share/frridge-mp/mounts"
 	defaultGuestStateRoot  = "/home/ubuntu/.local/share/frridge-mp/workdirs"
 	defaultGuestBinaryRoot = "/home/ubuntu/.local/share/frridge-mp/bin"
+	defaultGuestImage      = "frridge-frr:latest"
 )
 
 // Service is the high-level API used by the frridge-mp CLI.
@@ -267,6 +268,9 @@ func (m *Manager) ensure(ctx context.Context, req resolvedRequest) (Environment,
 	if err := m.bootstrapGuest(ctx, env); err != nil {
 		return Environment{}, err
 	}
+	if err := m.ensureGuestImage(ctx, env); err != nil {
+		return Environment{}, err
+	}
 	stagedBinary := path.Join(env.GuestBinaryDir, fmt.Sprintf(".frridge-%d.tmp", os.Getpid()))
 	if err := m.cli.Transfer(ctx, build.Path, req.instance.Name+":"+stagedBinary); err != nil {
 		return Environment{}, err
@@ -306,6 +310,29 @@ func (m *Manager) ensureInstance(ctx context.Context, inst Instance) error {
 		}
 	}
 	return nil
+}
+
+// ensureGuestImage builds the repo's companion FRR image on the guest once so
+// examples that reference frridge-frr:latest work on a fresh Multipass VM.
+func (m *Manager) ensureGuestImage(ctx context.Context, env Environment) error {
+	if _, err := os.Stat(filepath.Join(env.RepoDir, "Dockerfile")); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat Dockerfile: %w", err)
+	}
+
+	const script = `
+set -euo pipefail
+if ! sudo docker image inspect "$1" >/dev/null 2>&1; then
+  sudo docker build -t "$1" .
+fi
+`
+
+	return m.cli.Exec(ctx, env.InstanceName, ExecSpec{
+		Command: []string{"bash", "-lc", strings.TrimSpace(script), "bash", defaultGuestImage},
+		Dir:     env.GuestRepoDir,
+	})
 }
 
 func (m *Manager) guestBuild(ctx context.Context, instance, repoDir string) (BuildResult, error) {
