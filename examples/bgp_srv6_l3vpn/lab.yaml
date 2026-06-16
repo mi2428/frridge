@@ -9,17 +9,22 @@ lab:
 
 routers:
   r1:
+    linux:
+      vrfs:
+        - name: vrf10
+          table: 10
+        - name: vrf20
+          table: 20
+      interfaces:
+        - name: eth3
+          master: vrf10
+        - name: eth4
+          master: vrf20
     commands:
       - kind: shell
         run: |
           set -e
           sysctl -w net.vrf.strict_mode=1
-          ip link add vrf10 type vrf table 10
-          ip link set vrf10 up
-          ip link add vrf20 type vrf table 20
-          ip link set vrf20 up
-          ip link set eth3 master vrf10
-          ip link set eth4 master vrf20
       - kind: vtysh
         run: |
           configure terminal
@@ -85,17 +90,22 @@ routers:
           write memory
 
   r2:
+    linux:
+      vrfs:
+        - name: vrf10
+          table: 10
+        - name: vrf20
+          table: 20
+      interfaces:
+        - name: eth2
+          master: vrf10
+        - name: eth3
+          master: vrf20
     commands:
       - kind: shell
         run: |
           set -e
           sysctl -w net.vrf.strict_mode=1
-          ip link add vrf10 type vrf table 10
-          ip link set vrf10 up
-          ip link add vrf20 type vrf table 20
-          ip link set vrf20 up
-          ip link set eth2 master vrf10
-          ip link set eth3 master vrf20
       - kind: vtysh
         run: |
           configure terminal
@@ -155,17 +165,22 @@ routers:
           write memory
 
   r3:
+    linux:
+      vrfs:
+        - name: vrf10
+          table: 10
+        - name: vrf20
+          table: 20
+      interfaces:
+        - name: eth2
+          master: vrf10
+        - name: eth3
+          master: vrf20
     commands:
       - kind: shell
         run: |
           set -e
           sysctl -w net.vrf.strict_mode=1
-          ip link add vrf10 type vrf table 10
-          ip link set vrf10 up
-          ip link add vrf20 type vrf table 20
-          ip link set vrf20 up
-          ip link set eth2 master vrf10
-          ip link set eth3 master vrf20
       - kind: vtysh
         run: |
           configure terminal

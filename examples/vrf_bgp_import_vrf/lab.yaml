@@ -8,38 +8,32 @@ routers:
   rt1:
     loopbacks:
       - 10.255.97.1/32
+    linux:
+      vrfs:
+        - name: blue
+          table: 1101
+        - name: red
+          table: 1102
+      veths:
+        - name: blue0
+          peer: blue-host0
+          master: blue
+          addresses: [10.10.97.1/24]
+          namespace:
+            name: blue-host
+            ifname: eth0
+            addresses: [10.10.97.11/24]
+            defaultVia: 10.10.97.1
+        - name: red0
+          peer: red-host0
+          master: red
+          addresses: [10.20.97.1/24]
+          namespace:
+            name: red-host
+            ifname: eth0
+            addresses: [10.20.97.11/24]
+            defaultVia: 10.20.97.1
     commands:
-      - kind: shell
-        run: |
-          set -e
-          ip link add blue type vrf table 1101
-          ip link add red type vrf table 1102
-          ip link set blue up
-          ip link set red up
-
-          ip link add blue0 type veth peer name blue-host0
-          ip link set blue0 master blue
-          ip addr add 10.10.97.1/24 dev blue0
-          ip link set blue0 up
-          ip netns add blue-host
-          ip link set blue-host0 netns blue-host
-          ip netns exec blue-host ip link set lo up
-          ip netns exec blue-host ip link set blue-host0 name eth0
-          ip netns exec blue-host ip addr add 10.10.97.11/24 dev eth0
-          ip netns exec blue-host ip link set eth0 up
-          ip netns exec blue-host ip route replace default via 10.10.97.1
-
-          ip link add red0 type veth peer name red-host0
-          ip link set red0 master red
-          ip addr add 10.20.97.1/24 dev red0
-          ip link set red0 up
-          ip netns add red-host
-          ip link set red-host0 netns red-host
-          ip netns exec red-host ip link set lo up
-          ip netns exec red-host ip link set red-host0 name eth0
-          ip netns exec red-host ip addr add 10.20.97.11/24 dev eth0
-          ip netns exec red-host ip link set eth0 up
-          ip netns exec red-host ip route replace default via 10.20.97.1
       - kind: vtysh
         run: |
           configure terminal

@@ -49,21 +49,21 @@ routers:
   asbr:
     loopbacks:
       - 10.255.98.3/32
+    linux:
+      veths:
+        - name: srv0
+          peer: svc0
+          addresses: [192.0.2.0/31]
+          namespace:
+            name: svc
+            ifname: eth0
+            addresses: [192.0.2.1/31]
+            defaultVia: 192.0.2.0
     commands:
       - kind: shell
         run: |
           set -e
-          ip link add srv0 type veth peer name svc0
-          ip addr add 192.0.2.0/31 dev srv0
-          ip link set srv0 up
-          ip netns add svc
-          ip link set svc0 netns svc
-          ip netns exec svc ip link set lo up
-          ip netns exec svc ip link set svc0 name eth0
-          ip netns exec svc ip addr add 192.0.2.1/31 dev eth0
-          ip netns exec svc ip link set eth0 up
           ip netns exec svc ip addr add 172.16.98.10/32 dev lo
-          ip netns exec svc ip route replace default via 192.0.2.0
       - kind: vtysh
         run: |
           configure terminal

@@ -16,33 +16,38 @@ routers:
   le1:
     loopbacks:
       - 10.255.101.11/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1010
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:01:50:11
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.101.11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      veths:
+        - name: lan0
+          peer: host0
+          master: tenant
+          addresses: [10.10.101.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.10.101.11/24]
+            defaultVia: 10.10.101.1
     commands:
       - kind: shell
         run: |
           set -e
-          ip link add tenant type vrf table 1010
-          ip link set tenant up
-
-          ip link add br5000 type bridge
-          ip link set br5000 master tenant addrgenmode none
-          ip link set br5000 addr 02:00:00:01:50:11
-          ip link add vxlan5000 type vxlan id 5000 local 10.255.101.11 dstport 4789 nolearning
-          ip link set vxlan5000 master br5000 addrgenmode none
-          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
-          ip link set vxlan5000 up
-          ip link set br5000 up
-
-          ip link add lan0 type veth peer name host0
-          ip link set lan0 master tenant
-          ip addr add 10.10.101.1/24 dev lan0
-          ip link set lan0 up
-          ip netns add host
-          ip link set host0 netns host
-          ip netns exec host ip link set lo up
-          ip netns exec host ip link set host0 name eth0
-          ip netns exec host ip addr add 10.10.101.11/24 dev eth0
-          ip netns exec host ip link set eth0 up
-          ip netns exec host ip route replace default via 10.10.101.1
           for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
             echo 0 > "$f"
           done
@@ -80,24 +85,30 @@ routers:
     loopbacks:
       - 10.255.101.1/32
       - 2001:db8:56:1::1/128
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1100
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:01:50:01
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.101.1
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
     commands:
       - kind: shell
         run: |
           set -e
           sysctl -w net.vrf.strict_mode=1
           sysctl -w net.ipv6.conf.eth2.seg6_enabled=1
-
-          ip link add tenant type vrf table 1100
-          ip link set tenant up
-
-          ip link add br5000 type bridge
-          ip link set br5000 master tenant addrgenmode none
-          ip link set br5000 addr 02:00:00:01:50:01
-          ip link add vxlan5000 type vxlan id 5000 local 10.255.101.1 dstport 4789 nolearning
-          ip link set vxlan5000 master br5000 addrgenmode none
-          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
-          ip link set vxlan5000 up
-          ip link set br5000 up
       - kind: vtysh
         run: |
           configure terminal
@@ -160,24 +171,30 @@ routers:
     loopbacks:
       - 10.255.102.1/32
       - 2001:db8:56:2::1/128
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1200
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:02:50:01
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.102.1
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
     commands:
       - kind: shell
         run: |
           set -e
           sysctl -w net.vrf.strict_mode=1
           sysctl -w net.ipv6.conf.eth2.seg6_enabled=1
-
-          ip link add tenant type vrf table 1200
-          ip link set tenant up
-
-          ip link add br5000 type bridge
-          ip link set br5000 master tenant addrgenmode none
-          ip link set br5000 addr 02:00:00:02:50:01
-          ip link add vxlan5000 type vxlan id 5000 local 10.255.102.1 dstport 4789 nolearning
-          ip link set vxlan5000 master br5000 addrgenmode none
-          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
-          ip link set vxlan5000 up
-          ip link set br5000 up
       - kind: vtysh
         run: |
           configure terminal
@@ -239,33 +256,38 @@ routers:
   re1:
     loopbacks:
       - 10.255.102.11/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1020
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:02:50:11
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.102.11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      veths:
+        - name: lan0
+          peer: host0
+          master: tenant
+          addresses: [10.20.102.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.20.102.11/24]
+            defaultVia: 10.20.102.1
     commands:
       - kind: shell
         run: |
           set -e
-          ip link add tenant type vrf table 1020
-          ip link set tenant up
-
-          ip link add br5000 type bridge
-          ip link set br5000 master tenant addrgenmode none
-          ip link set br5000 addr 02:00:00:02:50:11
-          ip link add vxlan5000 type vxlan id 5000 local 10.255.102.11 dstport 4789 nolearning
-          ip link set vxlan5000 master br5000 addrgenmode none
-          ip link set vxlan5000 type bridge_slave neigh_suppress on learning off
-          ip link set vxlan5000 up
-          ip link set br5000 up
-
-          ip link add lan0 type veth peer name host0
-          ip link set lan0 master tenant
-          ip addr add 10.20.102.1/24 dev lan0
-          ip link set lan0 up
-          ip netns add host
-          ip link set host0 netns host
-          ip netns exec host ip link set lo up
-          ip netns exec host ip link set host0 name eth0
-          ip netns exec host ip addr add 10.20.102.11/24 dev eth0
-          ip netns exec host ip link set eth0 up
-          ip netns exec host ip route replace default via 10.20.102.1
           for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
             echo 0 > "$f"
           done
