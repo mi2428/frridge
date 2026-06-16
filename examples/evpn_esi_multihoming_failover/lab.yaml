@@ -153,7 +153,7 @@ links:
         ifname: eth1
 
 pings:
-  - name: pe1-to-pe2-vtep
+  - name: pe1-to-rr-underlay
     from:
       router: pe1
-    to: 10.255.81.12
+    to: 10.0.81.1
