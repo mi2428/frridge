@@ -5,9 +5,9 @@ lab:
   workdir: .frridge
 
 routers:
-  as1:
+  pe1:
     loopbacks:
-      - 10.255.1.1/32
+      - 10.255.1.11/32
     linux:
       bridges:
         - name: br10
@@ -22,20 +22,60 @@ routers:
       - kind: vtysh
         run: |
           configure terminal
-          hostname as1
+          hostname pe1
           router bgp 65001
-           bgp router-id 10.255.1.1
-           neighbor 192.0.2.1 remote-as 65002
+           bgp router-id 10.255.1.11
+           neighbor 192.0.2.1 remote-as 65001
            address-family ipv4 unicast
-            network 10.255.1.1/32
+            network 10.255.1.11/32
             network 10.10.20.0/24
             neighbor 192.0.2.1 activate
            exit-address-family
           end
 
-  as2:
+  asbr1:
     loopbacks:
-      - 10.255.1.2/32
+      - 10.255.1.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr1
+          router bgp 65001
+           bgp router-id 10.255.1.1
+           neighbor 192.0.2.0 remote-as 65001
+           neighbor 192.0.2.3 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.1.1/32
+            neighbor 192.0.2.0 activate
+            neighbor 192.0.2.0 next-hop-self
+            neighbor 192.0.2.3 activate
+           exit-address-family
+          end
+
+  asbr2:
+    loopbacks:
+      - 10.255.2.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr2
+          router bgp 65002
+           bgp router-id 10.255.2.2
+           neighbor 192.0.2.2 remote-as 65001
+           neighbor 192.0.2.4 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.2.2/32
+            neighbor 192.0.2.2 activate
+            neighbor 192.0.2.4 activate
+            neighbor 192.0.2.4 next-hop-self
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.2.12/32
     linux:
       bridges:
         - name: br20
@@ -50,31 +90,52 @@ routers:
       - kind: vtysh
         run: |
           configure terminal
-          hostname as2
+          hostname pe2
           router bgp 65002
-           bgp router-id 10.255.1.2
-           neighbor 192.0.2.0 remote-as 65001
+           bgp router-id 10.255.2.12
+           neighbor 192.0.2.5 remote-as 65002
            address-family ipv4 unicast
-            network 10.255.1.2/32
+            network 10.255.2.12/32
             network 10.20.20.0/24
-            neighbor 192.0.2.0 activate
+            neighbor 192.0.2.5 activate
            exit-address-family
           end
 
 links:
-  - name: border-ip
+  - name: pe1-asbr1
     type: p2p
     members:
-      - router: as1
+      - router: pe1
         ifname: eth1
         ipv4: 192.0.2.0/31
-      - router: as2
+      - router: asbr1
         ifname: eth1
         ipv4: 192.0.2.1/31
 
+  - name: asbr1-asbr2
+    type: p2p
+    members:
+      - router: asbr1
+        ifname: eth2
+        ipv4: 192.0.2.2/31
+      - router: asbr2
+        ifname: eth1
+        ipv4: 192.0.2.3/31
+
+  - name: asbr2-pe2
+    type: p2p
+    members:
+      - router: asbr2
+        ifname: eth2
+        ipv4: 192.0.2.5/31
+      - router: pe2
+        ifname: eth1
+        ipv4: 192.0.2.4/31
+
 pings:
-  - name: as1-host-to-as2-host
+  - name: pe1-host-to-pe2-host
     from:
-      router: as1
+      router: pe1
       namespace: host
+      address: 10.10.20.11
     to: 10.20.20.12
