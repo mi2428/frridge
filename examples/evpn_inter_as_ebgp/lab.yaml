@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: evpn-inter-as-option-b
+  name: evpn-inter-as-ebgp
   workdir: .frridge
 
 routers:

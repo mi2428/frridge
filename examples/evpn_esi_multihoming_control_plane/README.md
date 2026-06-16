@@ -1,4 +1,4 @@
-# EVPN ESI Multihoming Failover (1 RR, 2 Multihomed PEs)
+# EVPN ESI Multihoming Control Plane (1 RR, 2 Multihomed PEs)
 
 This example builds one route reflector and two PEs that advertise the same Ethernet Segment.
 `lab.yaml` creates `bond0` on each PE, assigns the same EVPN multihoming ESI to both bonds, attaches them to a local bridge/VXLAN pair for VNI `100`, and forms EVPN sessions to a single route reflector.

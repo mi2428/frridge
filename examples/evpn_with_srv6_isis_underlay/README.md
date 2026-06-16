@@ -1,7 +1,7 @@
-# EVPN over SRv6 Underlay (1 RR, 2 VTEPs)
+# EVPN with SRv6 IS-IS Underlay (1 RR, 2 VTEPs)
 
 This example builds one route reflector and two VTEPs.
-`lab.yaml` uses IPv4 loopbacks and point-to-point underlay links for BGP reachability, then stretches a single L2 segment with EVPN over an SRv6-capable IS-IS underlay over VXLAN.
+`lab.yaml` uses IPv4 loopbacks and point-to-point links for EVPN VXLAN reachability, and also runs an SRv6-capable IS-IS IPv6 underlay on the same routers so the two control planes can be inspected side by side.
 
 ## Topology
 

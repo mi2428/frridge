@@ -1,4 +1,4 @@
-# EVPN Inter-AS Option B
+# EVPN Inter-AS eBGP
 
 This lab keeps the dataplane small and focuses on the control-plane handoff:
 two VTEPs live in different autonomous systems and exchange IPv4 unicast plus

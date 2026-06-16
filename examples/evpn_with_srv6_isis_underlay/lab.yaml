@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: evpn-over-srv6-underlay
+  name: evpn-with-srv6-isis-underlay
   workdir: .frridge
   defaults:
     sysctls:

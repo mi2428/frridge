@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: evpn-esi-multihoming-failover
+  name: evpn-esi-multihoming-control-plane
   workdir: .frridge
 
 routers:
