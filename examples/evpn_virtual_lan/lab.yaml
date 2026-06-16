@@ -1,0 +1,135 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-virtual-lan
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.80.100/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.80.100
+           bgp cluster-id 10.255.80.100
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.80.0 remote-as 65000
+           neighbor 10.0.80.2 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.80.100/32
+            neighbor 10.0.80.0 activate
+            neighbor 10.0.80.0 route-reflector-client
+            neighbor 10.0.80.0 next-hop-self force
+            neighbor 10.0.80.2 activate
+            neighbor 10.0.80.2 route-reflector-client
+            neighbor 10.0.80.2 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.80.0 activate
+            neighbor 10.0.80.0 route-reflector-client
+            neighbor 10.0.80.2 activate
+            neighbor 10.0.80.2 route-reflector-client
+           exit-address-family
+          end
+
+  pe1:
+    loopbacks:
+      - 10.255.80.11/32
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.80.11
+              nolearning: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:80:11
+              addresses:
+                - 10.10.80.11/24
+    commands:
+      - kind: shell
+        run: ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe1
+          router bgp 65000
+           bgp router-id 10.255.80.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.80.1 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.80.11/32
+            neighbor 10.0.80.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.80.1 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.80.12/32
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.80.12
+              nolearning: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:80:12
+              addresses:
+                - 10.10.80.12/24
+    commands:
+      - kind: shell
+        run: ip netns exec host ping -c 1 -W 1 10.10.80.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe2
+          router bgp 65000
+           bgp router-id 10.255.80.12
+           no bgp default ipv4-unicast
+           neighbor 10.0.80.3 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.80.12/32
+            neighbor 10.0.80.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.80.3 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+links:
+  - name: rr-pe1
+    type: p2p
+    members:
+      - { router: pe1, ifname: eth1, ipv4: 10.0.80.0/31 }
+      - { router: rr, ifname: eth1, ipv4: 10.0.80.1/31 }
+
+  - name: rr-pe2
+    type: p2p
+    members:
+      - { router: pe2, ifname: eth1, ipv4: 10.0.80.2/31 }
+      - { router: rr, ifname: eth2, ipv4: 10.0.80.3/31 }
+
+pings:
+  - name: pe1-host-to-pe2-host
+    from:
+      router: pe1
+      namespace: host
+      address: 10.10.80.11
+    to: 10.10.80.12
