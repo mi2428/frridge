@@ -1,0 +1,101 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-dci-gateway
+  workdir: .frridge
+
+routers:
+  pe1:
+    loopbacks:
+      - 10.255.93.11/32
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.93.11
+              nolearning: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:93:11
+              addresses: [10.10.93.11/24]
+    commands:
+      - kind: shell
+        run: ip netns exec host ping -c 1 -W 1 10.10.93.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe1
+          router bgp 65001
+           bgp router-id 10.255.93.11
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.93.1 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.93.11/32
+            neighbor 10.0.93.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.93.1 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.93.12/32
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.93.12
+              nolearning: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:00:93:12
+              addresses: [10.10.93.12/24]
+    commands:
+      - kind: shell
+        run: ip netns exec host ping -c 1 -W 1 10.10.93.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe2
+          router bgp 65002
+           bgp router-id 10.255.93.12
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.93.0 remote-as 65001
+           address-family ipv4 unicast
+            network 10.255.93.12/32
+            neighbor 10.0.93.0 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.93.0 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+links:
+  - name: pe1-pe2
+    type: p2p
+    members:
+      - router: pe1
+        ifname: eth1
+        ipv4: 10.0.93.0/31
+      - router: pe2
+        ifname: eth1
+        ipv4: 10.0.93.1/31
+
+pings:
+  - name: pe1-host-to-pe2-host
+    from:
+      router: pe1
+      namespace: host
+      address: 10.10.93.11
+    to: 10.10.93.12
