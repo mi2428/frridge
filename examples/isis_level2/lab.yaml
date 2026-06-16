@@ -1,7 +1,7 @@
 apiVersion: frridge/v1alpha1
 
 lab:
-  name: isis-line
+  name: isis-level2-line
   workdir: .frridge
 
 routers:

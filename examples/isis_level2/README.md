@@ -1,4 +1,4 @@
-# IS-IS (3 Routers)
+# IS-IS Level-2 (3 Routers)
 
 This example builds a 3-router line and runs IS-IS level-2 for IPv4 reachability.
 `lab.yaml` puts one /32 loopback on each router, uses /31 point-to-point transport links, enables the IPv4 unicast topology with wide metrics, and redistributes connected IPv4 prefixes into IS-IS level-2.
