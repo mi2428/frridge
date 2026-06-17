@@ -1,0 +1,235 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-type5-inter-as-option-b
+  workdir: .frridge
+
+routers:
+  pe1:
+    loopbacks:
+      - 10.255.95.11/32
+    linux:
+      routes:
+        - to: 10.255.95.12/32
+          via: 10.0.95.1
+          dev: eth1
+      vrfs:
+        - name: tenant
+          table: 1100
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:00:95:51
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.95.11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      veths:
+        - name: lan0
+          peer: host0
+          master: tenant
+          addresses: [10.10.95.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.10.95.11/24]
+            defaultVia: 10.10.95.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname pe1
+          router bgp 65001
+           bgp router-id 10.255.95.11
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.95.1 remote-as 65001
+           address-family ipv4 unicast
+            network 10.255.95.11/32
+            neighbor 10.0.95.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.95.1 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65001 vrf tenant
+           bgp router-id 10.255.95.11
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  asbr1:
+    loopbacks:
+      - 10.255.95.1/32
+    linux:
+      routes:
+        - to: 10.255.95.11/32
+          via: 10.0.95.0
+          dev: eth1
+        - to: 10.255.95.12/32
+          via: 10.0.95.3
+          dev: eth2
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr1
+          router bgp 65001
+           bgp router-id 10.255.95.1
+           bgp retain route-target all
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.95.0 remote-as 65001
+           neighbor 10.0.95.3 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.95.1/32
+            neighbor 10.0.95.0 activate
+            neighbor 10.0.95.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.95.0 activate
+            neighbor 10.0.95.3 activate
+           exit-address-family
+          end
+
+  asbr2:
+    loopbacks:
+      - 10.255.95.2/32
+    linux:
+      routes:
+        - to: 10.255.95.11/32
+          via: 10.0.95.2
+          dev: eth1
+        - to: 10.255.95.12/32
+          via: 10.0.95.4
+          dev: eth2
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname asbr2
+          router bgp 65002
+           bgp router-id 10.255.95.2
+           bgp retain route-target all
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.95.2 remote-as 65001
+           neighbor 10.0.95.4 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.95.2/32
+            neighbor 10.0.95.2 activate
+            neighbor 10.0.95.4 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.95.2 activate
+            neighbor 10.0.95.4 activate
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.95.12/32
+    linux:
+      routes:
+        - to: 10.255.95.11/32
+          via: 10.0.95.5
+          dev: eth1
+      vrfs:
+        - name: tenant
+          table: 1200
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:00:95:52
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.95.12
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      veths:
+        - name: lan0
+          peer: host0
+          master: tenant
+          addresses: [10.20.95.1/24]
+          namespace:
+            name: host
+            ifname: eth0
+            addresses: [10.20.95.12/24]
+            defaultVia: 10.20.95.1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname pe2
+          router bgp 65002
+           bgp router-id 10.255.95.12
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 10.0.95.5 remote-as 65002
+           address-family ipv4 unicast
+            network 10.255.95.12/32
+            neighbor 10.0.95.5 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.95.5 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          router bgp 65002 vrf tenant
+           bgp router-id 10.255.95.12
+           address-family ipv4 unicast
+            redistribute connected
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+links:
+  - name: pe1-asbr1
+    type: p2p
+    members:
+      - { router: pe1, ifname: eth1, ipv4: 10.0.95.0/31 }
+      - { router: asbr1, ifname: eth1, ipv4: 10.0.95.1/31 }
+
+  - name: asbr1-asbr2
+    type: p2p
+    members:
+      - { router: asbr1, ifname: eth2, ipv4: 10.0.95.2/31 }
+      - { router: asbr2, ifname: eth1, ipv4: 10.0.95.3/31 }
+
+  - name: asbr2-pe2
+    type: p2p
+    members:
+      - { router: pe2, ifname: eth1, ipv4: 10.0.95.4/31 }
+      - { router: asbr2, ifname: eth2, ipv4: 10.0.95.5/31 }
+
+pings:
+  - name: pe1-host-to-pe2-host
+    from:
+      router: pe1
+      namespace: host
+      address: 10.10.95.11
+    to: 10.20.95.12
