@@ -1,36 +1,42 @@
 # Seamless MPLS Multi-Domain
 
-This example uses `pathd` to steer a loopback route across a four-router
-diamond with an explicit segment list.
+This example builds a five-router BGP labeled-unicast chain across three
+autonomous-system domains.
+`lab.yaml` keeps the control plane simple: both edge PEs originate one local
+access subnet plus one loopback, and the intermediate ABR/core routers only
+exchange `ipv4 labeled-unicast` toward their adjacent domains.
 
 ## Topology
 
 ### Routers
 
-- `r1`
-  - Loopback: `10.255.83.1/32`
-  - Headend policy:
-    - Color `100`, endpoint `10.255.83.3`
-    - Segment list `16302 -> 16303`
-- `r2`
-  - Loopback: `10.255.83.2/32`
-  - Upper transit node on the preferred path
-- `r3`
-  - Loopback: `10.255.83.3/32`
-  - Reverse headend policy:
-    - Color `200`, endpoint `10.255.83.1`
-    - Segment list `16302 -> 16301`
-- `r4`
-  - Loopback: `10.255.83.4/32`
-  - Lower transit node that remains available in the IGP but is not selected by
-    the explicit policy
+- `pe1`
+  - AS `65001`
+  - Loopback: `10.255.84.11/32`
+  - Local host namespace: `10.10.84.11/24`
+- `abr1`
+  - AS `65001`
+  - Left-domain ABR toward `core`
+  - Loopback: `10.255.84.1/32`
+- `core`
+  - AS `65002`
+  - Transit labeled-unicast speaker between the two edge domains
+  - Loopback: `10.255.84.2/32`
+- `abr2`
+  - AS `65003`
+  - Right-domain ABR toward `core`
+  - Loopback: `10.255.84.3/32`
+- `pe2`
+  - AS `65003`
+  - Loopback: `10.255.84.12/32`
+  - Local host namespace: `10.20.84.12/24`
 
 ### Reachability
 
-- `pings:` checks `r1 -> r3 loopback`.
-- Give the lab roughly 25 seconds after `up` so IS-IS, TED export, and pathd
-  policy installation have all settled.
+- `pings:` checks `pe1` host `10.10.84.11` reaching `pe2` host `10.20.84.12`
+  across the labeled-unicast domains.
 - Useful follow-up commands:
-  - `show sr-te policy detail`
-  - `show isis mpls-te database`
+  - `show bgp ipv4 labeled-unicast`
   - `show mpls table`
+- The interesting part of this lab is the label handoff between
+  `pe1 -> abr1 -> core -> abr2 -> pe2` rather than any IGP or SR policy.

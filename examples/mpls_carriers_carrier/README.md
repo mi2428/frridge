@@ -1,7 +1,10 @@
 # MPLS Carrier's Carrier
 
-This example splits the topology into `PE -> ASBR -> ASBR -> PE`.
-`lab.yaml` keeps the two ASBRs out of the service BGP session and forms the actual inter-AS eBGP adjacency directly between `pe1` and `pe2`. Because this lab is IP-only, the ASBRs also carry static routes for the PE loopbacks and service subnets.
+This example keeps the control plane deliberately small and focuses on the
+transport split in a carrier's-carrier-style MPLS chain.
+`lab.yaml` forms a multihop eBGP labeled-unicast session directly between
+`pe1` and `pe2`, while `asbr1` and `asbr2` only provide MPLS forwarding and
+static reachability across the transport path.
 
 ## Topology
 
@@ -37,11 +40,15 @@ This example splits the topology into `PE -> ASBR -> ASBR -> PE`.
 
 ### Carrier's Carrier Behavior
 
-- `pe1` and `pe2` form the service eBGP session directly between their loopbacks.
-- `asbr1` and `asbr2` do not participate in the service BGP control plane.
-- To keep this learning lab IP-only and pingable, the ASBRs carry static routes for both PE loopbacks and both service subnets.
-- The service routes are exchanged on the end-to-end multihop PE session instead of on any ASBR-facing BGP session.
-- This is the role-split learning version of option C. It intentionally focuses on PE-to-PE service peering rather than on a full MPLS VPN or carrier's-carrier control plane.
+- `pe1` and `pe2` exchange loopbacks and attached customer subnets in
+  `ipv4 labeled-unicast` over a multihop eBGP session.
+- `asbr1` and `asbr2` do not run BGP at all in this lab.
+- The ASBRs only enable MPLS on their transit interfaces and carry static
+  routes for the two PE loopbacks and the two attached service subnets.
+- `mpls bgp forwarding` on the PE-facing links lets the end-to-end labeled BGP
+  session install usable transport next-hops over the two intermediate ASBRs.
+- This is the smallest example in the repo that shows service PEs staying in
+  the control plane while intermediate carrier routers only switch labels.
 
 ### Reachability
 
