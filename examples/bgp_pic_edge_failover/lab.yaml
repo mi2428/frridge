@@ -13,6 +13,12 @@ routers:
         - to: 10.255.74.100/32
           via: 192.0.2.1
           dev: eth1
+        - to: 10.255.74.21/32
+          via: 192.0.2.1
+          dev: eth1
+        - to: 10.255.74.22/32
+          via: 192.0.2.1
+          dev: eth1
       bridges:
         - name: br10
           addresses: [10.10.74.1/24]
@@ -35,6 +41,7 @@ routers:
            address-family ipv4 unicast
             network 10.10.74.0/24
             neighbor 10.255.74.100 activate
+            neighbor 10.255.74.100 addpath-rx-paths-limit 8
             maximum-paths ibgp 2
            exit-address-family
           end
@@ -86,6 +93,9 @@ routers:
         - to: 10.255.74.100/32
           via: 192.0.2.2
           dev: eth1
+        - to: 10.255.74.11/32
+          via: 192.0.2.2
+          dev: eth1
     commands:
       - kind: vtysh
         run: |
@@ -110,6 +120,9 @@ routers:
     linux:
       routes:
         - to: 10.255.74.100/32
+          via: 192.0.2.4
+          dev: eth1
+        - to: 10.255.74.11/32
           via: 192.0.2.4
           dev: eth1
     commands:

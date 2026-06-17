@@ -5,48 +5,18 @@ lab:
   workdir: .frridge
 
 routers:
-  rr:
-    loopbacks:
-      - 10.255.73.100/32
-    linux:
-      routes:
-        - to: 10.255.73.11/32
-          via: 192.0.2.0
-          dev: eth1
-        - to: 10.255.73.12/32
-          via: 192.0.2.3
-          dev: eth2
-    commands:
-      - kind: vtysh
-        run: |
-          configure terminal
-          hostname rr
-          router bgp 65000
-           bgp router-id 10.255.73.100
-           bgp cluster-id 10.255.73.100
-           neighbor 10.255.73.11 remote-as 65000
-           neighbor 10.255.73.11 update-source lo
-           neighbor 10.255.73.11 next-hop-self force
-           neighbor 10.255.73.11 route-reflector-client
-           neighbor 10.255.73.12 remote-as 65000
-           neighbor 10.255.73.12 update-source lo
-           neighbor 10.255.73.12 next-hop-self force
-           neighbor 10.255.73.12 route-reflector-client
-           address-family ipv4 unicast
-            network 10.255.73.100/32
-            neighbor 10.255.73.11 activate
-            neighbor 10.255.73.11 addpath-tx-all-paths
-            neighbor 10.255.73.12 activate
-            neighbor 10.255.73.12 addpath-tx-all-paths
-           exit-address-family
-          end
-
-  c1:
+  ingress:
     loopbacks:
       - 10.255.73.11/32
     linux:
       routes:
         - to: 10.255.73.100/32
+          via: 192.0.2.1
+          dev: eth1
+        - to: 10.255.73.21/32
+          via: 192.0.2.1
+          dev: eth1
+        - to: 10.255.73.22/32
           via: 192.0.2.1
           dev: eth1
       bridges:
@@ -62,76 +32,157 @@ routers:
       - kind: vtysh
         run: |
           configure terminal
-          hostname c1
+          hostname ingress
           router bgp 65000
            bgp router-id 10.255.73.11
            neighbor 10.255.73.100 remote-as 65000
            neighbor 10.255.73.100 update-source lo
            address-family ipv4 unicast
-            network 10.255.73.11/32
             network 10.10.73.0/24
             neighbor 10.255.73.100 activate
+            neighbor 10.255.73.100 addpath-rx-paths-limit 8
            exit-address-family
           end
 
-  c2:
+  rr:
     loopbacks:
-      - 10.255.73.12/32
+      - 10.255.73.100/32
+    linux:
+      routes:
+        - to: 10.255.73.11/32
+          via: 192.0.2.0
+          dev: eth1
+        - to: 10.255.73.21/32
+          via: 192.0.2.3
+          dev: eth2
+        - to: 10.255.73.22/32
+          via: 192.0.2.5
+          dev: eth3
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          router bgp 65000
+           bgp router-id 10.255.73.100
+           bgp cluster-id 10.255.73.100
+           neighbor 10.255.73.11 remote-as 65000
+           neighbor 10.255.73.11 update-source lo
+           neighbor 10.255.73.11 route-reflector-client
+           neighbor 10.255.73.21 remote-as 65000
+           neighbor 10.255.73.21 update-source lo
+           neighbor 10.255.73.21 route-reflector-client
+           neighbor 10.255.73.22 remote-as 65000
+           neighbor 10.255.73.22 update-source lo
+           neighbor 10.255.73.22 route-reflector-client
+           address-family ipv4 unicast
+            network 10.255.73.100/32
+            neighbor 10.255.73.11 activate
+            neighbor 10.255.73.11 addpath-tx-all-paths
+            neighbor 10.255.73.21 activate
+            neighbor 10.255.73.22 activate
+           exit-address-family
+          end
+
+  exit1:
+    loopbacks:
+      - 10.255.73.21/32
     linux:
       routes:
         - to: 10.255.73.100/32
           via: 192.0.2.2
           dev: eth1
-      bridges:
-        - name: br20
-          addresses: [10.20.73.1/24]
-          namespaces:
-            - name: host
-              ifname: eth0
-              mac: 02:00:00:00:73:12
-              addresses: [10.20.73.12/24]
-              defaultVia: 10.20.73.1
+        - to: 10.255.73.11/32
+          via: 192.0.2.2
+          dev: eth1
     commands:
       - kind: vtysh
         run: |
           configure terminal
-          hostname c2
+          hostname exit1
+          interface eth2
+           ip address 10.30.73.1/24
+          exit
           router bgp 65000
-           bgp router-id 10.255.73.12
+           bgp router-id 10.255.73.21
            neighbor 10.255.73.100 remote-as 65000
            neighbor 10.255.73.100 update-source lo
            address-family ipv4 unicast
-            network 10.255.73.12/32
-            network 10.20.73.0/24
+            network 10.30.73.0/24
             neighbor 10.255.73.100 activate
            exit-address-family
           end
 
-links:
-  - name: rr-c1
-    type: p2p
-    members:
-      - router: rr
-        ifname: eth1
-        ipv4: 192.0.2.1/31
-      - router: c1
-        ifname: eth1
-        ipv4: 192.0.2.0/31
+  exit2:
+    loopbacks:
+      - 10.255.73.22/32
+    linux:
+      routes:
+        - to: 10.255.73.100/32
+          via: 192.0.2.4
+          dev: eth1
+        - to: 10.255.73.11/32
+          via: 192.0.2.4
+          dev: eth1
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname exit2
+          interface eth2
+           ip address 10.30.73.2/24
+          exit
+          router bgp 65000
+           bgp router-id 10.255.73.22
+           neighbor 10.255.73.100 remote-as 65000
+           neighbor 10.255.73.100 update-source lo
+           address-family ipv4 unicast
+            network 10.30.73.0/24
+            neighbor 10.255.73.100 activate
+           exit-address-family
+          end
 
-  - name: rr-c2
+  service:
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          interface eth1
+           ip address 10.30.73.33/24
+          exit
+          ip route 0.0.0.0/0 10.30.73.1
+          end
+
+links:
+  - name: ingress-rr
     type: p2p
     members:
-      - router: rr
-        ifname: eth2
-        ipv4: 192.0.2.2/31
-      - router: c2
-        ifname: eth1
-        ipv4: 192.0.2.3/31
+      - { router: ingress, ifname: eth1, ipv4: 192.0.2.0/31 }
+      - { router: rr, ifname: eth1, ipv4: 192.0.2.1/31 }
+
+  - name: rr-exit1
+    type: p2p
+    members:
+      - { router: rr, ifname: eth2, ipv4: 192.0.2.2/31 }
+      - { router: exit1, ifname: eth1, ipv4: 192.0.2.3/31 }
+
+  - name: rr-exit2
+    type: p2p
+    members:
+      - { router: rr, ifname: eth3, ipv4: 192.0.2.4/31 }
+      - { router: exit2, ifname: eth1, ipv4: 192.0.2.5/31 }
+
+  - name: service-lan
+    type: bridge
+    members:
+      - { router: exit1, ifname: eth2 }
+      - { router: exit2, ifname: eth2 }
+      - { router: service, ifname: eth1 }
 
 pings:
-  - name: c1-host-to-c2-host
+  - name: ingress-host-to-service
     from:
-      router: c1
+      router: ingress
       namespace: host
       address: 10.10.73.11
-    to: 10.20.73.12
+    to: 10.30.73.33

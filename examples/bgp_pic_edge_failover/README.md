@@ -9,13 +9,17 @@ reflector, negotiates add-path from the RR, and installs up to two iBGP paths.
 - `edge`
   - Local host namespace: `10.10.74.11/24`
   - iBGP session to `rr`
+  - `addpath-rx-paths-limit 8`
   - `maximum-paths ibgp 2`
+  - Static routes point both exit loopbacks at `rr`, so the reflected next-hops
+    remain resolvable without a separate IGP
 - `rr`
   - Route reflector for `edge`, `exit1`, and `exit2`
   - Sends all paths to `edge` with `addpath-tx-all-paths`
 - `exit1` and `exit2`
   - Both advertise `10.30.74.0/24`
   - Both attach to the service LAN
+  - Both keep a static route back to the `edge` loopback through `rr`
 - `service`
   - Service endpoint: `10.30.74.33/24`
 
