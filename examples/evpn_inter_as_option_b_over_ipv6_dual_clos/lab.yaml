@@ -1,0 +1,561 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-inter-as-option-b-ipv6-dual-clos
+  workdir: .frridge
+  defaults:
+    sysctls:
+      net.ipv6.conf.all.forwarding: "1"
+
+routers:
+  lsp1:
+    loopbacks:
+      - 2001:db8:193:1::1/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:11::1/127 dev eth1
+          ip -6 addr replace 2001:db8:193:12::1/127 dev eth2
+          ip -6 addr replace 2001:db8:193:13::1/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lsp1
+          router bgp 65001
+           bgp router-id 10.255.193.1
+           bgp cluster-id 10.255.193.1
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:11::0 remote-as 65001
+           neighbor 2001:db8:193:12::0 remote-as 65001
+           neighbor 2001:db8:193:13::0 remote-as 65001
+           address-family ipv6 unicast
+            network 2001:db8:193:1::1/128
+            neighbor 2001:db8:193:11::0 activate
+            neighbor 2001:db8:193:11::0 route-reflector-client
+            neighbor 2001:db8:193:11::0 next-hop-self force
+            neighbor 2001:db8:193:12::0 activate
+            neighbor 2001:db8:193:12::0 route-reflector-client
+            neighbor 2001:db8:193:12::0 next-hop-self force
+            neighbor 2001:db8:193:13::0 activate
+            neighbor 2001:db8:193:13::0 route-reflector-client
+            neighbor 2001:db8:193:13::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:11::0 activate
+            neighbor 2001:db8:193:11::0 route-reflector-client
+            neighbor 2001:db8:193:12::0 activate
+            neighbor 2001:db8:193:12::0 route-reflector-client
+            neighbor 2001:db8:193:13::0 activate
+            neighbor 2001:db8:193:13::0 route-reflector-client
+           exit-address-family
+          end
+
+  lsp2:
+    loopbacks:
+      - 2001:db8:193:1::2/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:14::1/127 dev eth1
+          ip -6 addr replace 2001:db8:193:15::1/127 dev eth2
+          ip -6 addr replace 2001:db8:193:16::1/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lsp2
+          router bgp 65001
+           bgp router-id 10.255.193.2
+           bgp cluster-id 10.255.193.2
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:14::0 remote-as 65001
+           neighbor 2001:db8:193:15::0 remote-as 65001
+           neighbor 2001:db8:193:16::0 remote-as 65001
+           address-family ipv6 unicast
+            network 2001:db8:193:1::2/128
+            neighbor 2001:db8:193:14::0 activate
+            neighbor 2001:db8:193:14::0 route-reflector-client
+            neighbor 2001:db8:193:14::0 next-hop-self force
+            neighbor 2001:db8:193:15::0 activate
+            neighbor 2001:db8:193:15::0 route-reflector-client
+            neighbor 2001:db8:193:15::0 next-hop-self force
+            neighbor 2001:db8:193:16::0 activate
+            neighbor 2001:db8:193:16::0 route-reflector-client
+            neighbor 2001:db8:193:16::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:14::0 activate
+            neighbor 2001:db8:193:14::0 route-reflector-client
+            neighbor 2001:db8:193:15::0 activate
+            neighbor 2001:db8:193:15::0 route-reflector-client
+            neighbor 2001:db8:193:16::0 activate
+            neighbor 2001:db8:193:16::0 route-reflector-client
+           exit-address-family
+          end
+
+  llf1:
+    loopbacks:
+      - 2001:db8:193:1::11/128
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 2001:db8:193:1::11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                learning: false
+                neighSuppress: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:93:10:11
+              addresses: [10.10.193.11/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:11::0/127 dev eth1
+          ip -6 addr replace 2001:db8:193:14::0/127 dev eth2
+          ip netns exec host ping -c 1 -W 1 10.10.193.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname llf1
+          router bgp 65001
+           bgp router-id 10.255.193.11
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:11::1 remote-as 65001
+           neighbor 2001:db8:193:14::1 remote-as 65001
+           address-family ipv6 unicast
+            network 2001:db8:193:1::11/128
+            neighbor 2001:db8:193:11::1 activate
+            neighbor 2001:db8:193:14::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:11::1 activate
+            neighbor 2001:db8:193:14::1 activate
+            advertise-all-vni
+            vni 100
+             route-target import 65193:100
+             route-target export 65193:100
+            exit-vni
+           exit-address-family
+          end
+
+  llf2:
+    loopbacks:
+      - 2001:db8:193:1::12/128
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 2001:db8:193:1::12
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                learning: false
+                neighSuppress: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:93:10:12
+              addresses: [10.10.193.12/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:12::0/127 dev eth1
+          ip -6 addr replace 2001:db8:193:15::0/127 dev eth2
+          ip netns exec host ping -c 1 -W 1 10.10.193.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname llf2
+          router bgp 65001
+           bgp router-id 10.255.193.12
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:12::1 remote-as 65001
+           neighbor 2001:db8:193:15::1 remote-as 65001
+           address-family ipv6 unicast
+            network 2001:db8:193:1::12/128
+            neighbor 2001:db8:193:12::1 activate
+            neighbor 2001:db8:193:15::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:12::1 activate
+            neighbor 2001:db8:193:15::1 activate
+            advertise-all-vni
+            vni 100
+             route-target import 65193:100
+             route-target export 65193:100
+            exit-vni
+           exit-address-family
+          end
+
+  llf3:
+    loopbacks:
+      - 2001:db8:193:1::13/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:13::0/127 dev eth1
+          ip -6 addr replace 2001:db8:193:16::0/127 dev eth2
+          ip -6 addr replace 2001:db8:193:ff::0/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname llf3
+          router bgp 65001
+           bgp router-id 10.255.193.13
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:13::1 remote-as 65001
+           neighbor 2001:db8:193:16::1 remote-as 65001
+           neighbor 2001:db8:193:ff::1 remote-as 65002
+           address-family ipv6 unicast
+            network 2001:db8:193:1::13/128
+            neighbor 2001:db8:193:13::1 activate
+            neighbor 2001:db8:193:13::1 next-hop-self force
+            neighbor 2001:db8:193:16::1 activate
+            neighbor 2001:db8:193:16::1 next-hop-self force
+            neighbor 2001:db8:193:ff::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:13::1 activate
+            neighbor 2001:db8:193:16::1 activate
+            neighbor 2001:db8:193:ff::1 activate
+           exit-address-family
+          end
+
+  rlf1:
+    loopbacks:
+      - 2001:db8:193:2::11/128
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 2001:db8:193:2::11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                learning: false
+                neighSuppress: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:93:20:21
+              addresses: [10.10.193.21/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:21::0/127 dev eth1
+          ip -6 addr replace 2001:db8:193:24::0/127 dev eth2
+          ip netns exec host ping -c 1 -W 1 10.10.193.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rlf1
+          router bgp 65002
+           bgp router-id 10.255.194.11
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:21::1 remote-as 65002
+           neighbor 2001:db8:193:24::1 remote-as 65002
+           address-family ipv6 unicast
+            network 2001:db8:193:2::11/128
+            neighbor 2001:db8:193:21::1 activate
+            neighbor 2001:db8:193:24::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:21::1 activate
+            neighbor 2001:db8:193:24::1 activate
+            advertise-all-vni
+            vni 100
+             route-target import 65193:100
+             route-target export 65193:100
+            exit-vni
+           exit-address-family
+          end
+
+  rlf2:
+    loopbacks:
+      - 2001:db8:193:2::12/128
+    linux:
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 2001:db8:193:2::12
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                learning: false
+                neighSuppress: true
+          namespaces:
+            - name: host
+              ifname: eth0
+              mac: 02:00:00:93:20:22
+              addresses: [10.10.193.22/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:22::0/127 dev eth1
+          ip -6 addr replace 2001:db8:193:25::0/127 dev eth2
+          ip netns exec host ping -c 1 -W 1 10.10.193.254 >/dev/null 2>&1 || true
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rlf2
+          router bgp 65002
+           bgp router-id 10.255.194.12
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:22::1 remote-as 65002
+           neighbor 2001:db8:193:25::1 remote-as 65002
+           address-family ipv6 unicast
+            network 2001:db8:193:2::12/128
+            neighbor 2001:db8:193:22::1 activate
+            neighbor 2001:db8:193:25::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:22::1 activate
+            neighbor 2001:db8:193:25::1 activate
+            advertise-all-vni
+            vni 100
+             route-target import 65193:100
+             route-target export 65193:100
+            exit-vni
+           exit-address-family
+          end
+
+  rlf3:
+    loopbacks:
+      - 2001:db8:193:2::13/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:23::0/127 dev eth1
+          ip -6 addr replace 2001:db8:193:26::0/127 dev eth2
+          ip -6 addr replace 2001:db8:193:ff::1/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rlf3
+          router bgp 65002
+           bgp router-id 10.255.194.13
+           no bgp ebgp-requires-policy
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:23::1 remote-as 65002
+           neighbor 2001:db8:193:26::1 remote-as 65002
+           neighbor 2001:db8:193:ff::0 remote-as 65001
+           address-family ipv6 unicast
+            network 2001:db8:193:2::13/128
+            neighbor 2001:db8:193:23::1 activate
+            neighbor 2001:db8:193:23::1 next-hop-self force
+            neighbor 2001:db8:193:26::1 activate
+            neighbor 2001:db8:193:26::1 next-hop-self force
+            neighbor 2001:db8:193:ff::0 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:23::1 activate
+            neighbor 2001:db8:193:26::1 activate
+            neighbor 2001:db8:193:ff::0 activate
+           exit-address-family
+          end
+
+  rsp1:
+    loopbacks:
+      - 2001:db8:193:2::1/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:21::1/127 dev eth1
+          ip -6 addr replace 2001:db8:193:22::1/127 dev eth2
+          ip -6 addr replace 2001:db8:193:23::1/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rsp1
+          router bgp 65002
+           bgp router-id 10.255.194.1
+           bgp cluster-id 10.255.194.1
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:21::0 remote-as 65002
+           neighbor 2001:db8:193:22::0 remote-as 65002
+           neighbor 2001:db8:193:23::0 remote-as 65002
+           address-family ipv6 unicast
+            network 2001:db8:193:2::1/128
+            neighbor 2001:db8:193:21::0 activate
+            neighbor 2001:db8:193:21::0 route-reflector-client
+            neighbor 2001:db8:193:21::0 next-hop-self force
+            neighbor 2001:db8:193:22::0 activate
+            neighbor 2001:db8:193:22::0 route-reflector-client
+            neighbor 2001:db8:193:22::0 next-hop-self force
+            neighbor 2001:db8:193:23::0 activate
+            neighbor 2001:db8:193:23::0 route-reflector-client
+            neighbor 2001:db8:193:23::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:21::0 activate
+            neighbor 2001:db8:193:21::0 route-reflector-client
+            neighbor 2001:db8:193:22::0 activate
+            neighbor 2001:db8:193:22::0 route-reflector-client
+            neighbor 2001:db8:193:23::0 activate
+            neighbor 2001:db8:193:23::0 route-reflector-client
+           exit-address-family
+          end
+
+  rsp2:
+    loopbacks:
+      - 2001:db8:193:2::2/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:193:24::1/127 dev eth1
+          ip -6 addr replace 2001:db8:193:25::1/127 dev eth2
+          ip -6 addr replace 2001:db8:193:26::1/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rsp2
+          router bgp 65002
+           bgp router-id 10.255.194.2
+           bgp cluster-id 10.255.194.2
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:193:24::0 remote-as 65002
+           neighbor 2001:db8:193:25::0 remote-as 65002
+           neighbor 2001:db8:193:26::0 remote-as 65002
+           address-family ipv6 unicast
+            network 2001:db8:193:2::2/128
+            neighbor 2001:db8:193:24::0 activate
+            neighbor 2001:db8:193:24::0 route-reflector-client
+            neighbor 2001:db8:193:24::0 next-hop-self force
+            neighbor 2001:db8:193:25::0 activate
+            neighbor 2001:db8:193:25::0 route-reflector-client
+            neighbor 2001:db8:193:25::0 next-hop-self force
+            neighbor 2001:db8:193:26::0 activate
+            neighbor 2001:db8:193:26::0 route-reflector-client
+            neighbor 2001:db8:193:26::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:193:24::0 activate
+            neighbor 2001:db8:193:24::0 route-reflector-client
+            neighbor 2001:db8:193:25::0 activate
+            neighbor 2001:db8:193:25::0 route-reflector-client
+            neighbor 2001:db8:193:26::0 activate
+            neighbor 2001:db8:193:26::0 route-reflector-client
+           exit-address-family
+          end
+      - kind: shell
+        run: |
+          set -e
+          sleep 10
+
+links:
+  - name: llf1-lsp1
+    type: p2p
+    members:
+      - { router: llf1, ifname: eth1 }
+      - { router: lsp1, ifname: eth1 }
+
+  - name: llf2-lsp1
+    type: p2p
+    members:
+      - { router: llf2, ifname: eth1 }
+      - { router: lsp1, ifname: eth2 }
+
+  - name: llf3-lsp1
+    type: p2p
+    members:
+      - { router: llf3, ifname: eth1 }
+      - { router: lsp1, ifname: eth3 }
+
+  - name: llf1-lsp2
+    type: p2p
+    members:
+      - { router: llf1, ifname: eth2 }
+      - { router: lsp2, ifname: eth1 }
+
+  - name: llf2-lsp2
+    type: p2p
+    members:
+      - { router: llf2, ifname: eth2 }
+      - { router: lsp2, ifname: eth2 }
+
+  - name: llf3-lsp2
+    type: p2p
+    members:
+      - { router: llf3, ifname: eth2 }
+      - { router: lsp2, ifname: eth3 }
+
+  - name: rlf1-rsp1
+    type: p2p
+    members:
+      - { router: rlf1, ifname: eth1 }
+      - { router: rsp1, ifname: eth1 }
+
+  - name: rlf2-rsp1
+    type: p2p
+    members:
+      - { router: rlf2, ifname: eth1 }
+      - { router: rsp1, ifname: eth2 }
+
+  - name: rlf3-rsp1
+    type: p2p
+    members:
+      - { router: rlf3, ifname: eth1 }
+      - { router: rsp1, ifname: eth3 }
+
+  - name: rlf1-rsp2
+    type: p2p
+    members:
+      - { router: rlf1, ifname: eth2 }
+      - { router: rsp2, ifname: eth1 }
+
+  - name: rlf2-rsp2
+    type: p2p
+    members:
+      - { router: rlf2, ifname: eth2 }
+      - { router: rsp2, ifname: eth2 }
+
+  - name: rlf3-rsp2
+    type: p2p
+    members:
+      - { router: rlf3, ifname: eth2 }
+      - { router: rsp2, ifname: eth3 }
+
+  - name: left-right-border
+    type: p2p
+    members:
+      - { router: llf3, ifname: eth3 }
+      - { router: rlf3, ifname: eth3 }
+
+pings:
+  - name: llf1-host-to-rlf1-host
+    from:
+      router: llf1
+      namespace: host
+    to: 10.10.193.21
+
+  - name: llf2-host-to-rlf2-host
+    from:
+      router: llf2
+      namespace: host
+    to: 10.10.193.22
