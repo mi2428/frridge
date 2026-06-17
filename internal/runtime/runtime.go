@@ -356,13 +356,18 @@ func (m *Manager) configureLinux(ctx context.Context, routers map[string]config.
 				return fmt.Errorf("router %q vrf %q: %w", routerName, vrf.Name, err)
 			}
 		}
+		for _, bond := range routers[routerName].Linux.Bonds {
+			if err := m.configureLinuxBond(ctx, container.ID, bond); err != nil {
+				return fmt.Errorf("router %q bond %q: %w", routerName, bond.Name, err)
+			}
+		}
 		for _, bridge := range routers[routerName].Linux.Bridges {
 			if err := m.configureLinuxBridge(ctx, container.ID, bridge); err != nil {
 				return fmt.Errorf("router %q bridge %q: %w", routerName, bridge.Name, err)
 			}
 		}
 		for _, bond := range routers[routerName].Linux.Bonds {
-			if err := m.configureLinuxBond(ctx, container.ID, bond); err != nil {
+			if err := m.attachLinuxBondMaster(ctx, container.ID, bond); err != nil {
 				return fmt.Errorf("router %q bond %q: %w", routerName, bond.Name, err)
 			}
 		}
@@ -418,10 +423,12 @@ func (m *Manager) configureLinuxBond(ctx context.Context, containerID string, bo
 	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bond.Name, "up"}, "bring bond up"); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (m *Manager) attachLinuxBondMaster(ctx context.Context, containerID string, bond config.Bond) error {
 	if strings.TrimSpace(bond.Master) != "" {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bond.Name, "master", bond.Master}, "attach bond to master"); err != nil {
-			return err
-		}
+		return m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bond.Name, "master", bond.Master}, "attach bond to master")
 	}
 	return nil
 }

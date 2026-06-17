@@ -1,7 +1,7 @@
 # EVPN ESI Multihoming Failover (1 RR, 2 Multihomed PEs)
 
 This example builds one route reflector and two PEs that advertise the same Ethernet Segment.
-`lab.yaml` creates `bond0` on each PE, assigns the same EVPN multihoming ESI to both bonds, attaches them to a local bridge/VXLAN pair for VNI `100`, and forms EVPN sessions to a single route reflector.
+`lab.yaml` creates `bond0` on each PE, assigns the same EVPN multihoming ESI to both bonds, dual-homes a CE-side `srv bond0` across the two PEs, attaches the PE bonds to a local bridge/VXLAN pair for VNI `100`, and forms EVPN sessions to a single route reflector.
 
 ## Topology
 
@@ -39,10 +39,14 @@ This example builds one route reflector and two PEs that advertise the same Ethe
 ### Attached Segment
 
 - `srv`
-  - A simple attachment point on the shared `access` bridge
-  - No routing config; it only keeps the access segment present and up
+  - CE-side `bond0` built from `eth1` and `eth2`
+  - Service IP: `10.10.81.11/24`
+  - Uplinks:
+    - `eth1` to `pe1 eth2`
+    - `eth2` to `pe2 eth2`
 
 ### Verification
 
 - EVPN type-1/type-4 routes are EAD-per-ES / EAD-per-EVI advertisements for the shared Ethernet Segment.
 - After `up`, inspect `show bgp l2vpn evpn route type 1` on `rr`, `pe1`, or `pe2` to confirm that the two PEs advertise the same Ethernet Segment into the EVPN control plane.
+- `pings:` in `lab.yaml` checks that the multihomed CE can reach the remote `pe3` host over the EVPN segment.

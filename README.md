@@ -180,7 +180,6 @@ routers:
       bonds:
         - name: bond0            # optional Linux bond device
           mode: active-backup
-          master: br10           # optional upper device for the bond itself
           interfaces: [eth2]     # optional existing router interfaces enslaved to the bond
       interfaces:
         - name: eth3             # optional existing interface to re-home or address
@@ -207,7 +206,7 @@ routers:
           mac: 02:00:00:00:10:01
           addrgenmode: none
           addresses: [10.10.10.1/24]
-          interfaces: [eth2]     # optional existing router interfaces enslaved to the bridge
+          interfaces: [bond0]    # optional existing router interfaces enslaved to the bridge
           vxlans:
             - name: vxlan100
               vni: 100

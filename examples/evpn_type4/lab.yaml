@@ -44,10 +44,10 @@ routers:
       bonds:
         - name: bond0
           mode: active-backup
-          master: br10
           interfaces: [eth2]
       bridges:
         - name: br10
+          interfaces: [bond0]
           vxlans:
             - name: vxlan100
               vni: 100
@@ -84,10 +84,10 @@ routers:
       bonds:
         - name: bond0
           mode: active-backup
-          master: br10
           interfaces: [eth2]
       bridges:
         - name: br10
+          interfaces: [bond0]
           vxlans:
             - name: vxlan100
               vni: 100

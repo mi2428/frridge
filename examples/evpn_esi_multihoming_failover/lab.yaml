@@ -50,10 +50,10 @@ routers:
       bonds:
         - name: bond0
           mode: active-backup
-          master: br10
           interfaces: [eth2]
       bridges:
         - name: br10
+          interfaces: [bond0]
           vxlans:
             - name: vxlan100
               vni: 100
@@ -90,10 +90,10 @@ routers:
       bonds:
         - name: bond0
           mode: active-backup
-          master: br10
           interfaces: [eth2]
       bridges:
         - name: br10
+          interfaces: [bond0]
           vxlans:
             - name: vxlan100
               vni: 100
@@ -161,15 +161,13 @@ routers:
           end
 
   srv:
-    commands:
-      - kind: vtysh
-        run: |
-          configure terminal
-          hostname srv
-          interface eth1
-           ip address 10.10.81.11/24
-          exit
-          end
+    linux:
+      bonds:
+        - name: bond0
+          mode: active-backup
+          mac: 02:00:00:00:81:11
+          addresses: [10.10.81.11/24]
+          interfaces: [eth1, eth2]
 
 links:
   - name: rr-pe1
@@ -202,15 +200,21 @@ links:
         ifname: eth3
         ipv4: 10.0.81.5/31
 
-  - name: access
-    type: bridge
+  - name: pe1-srv
+    type: p2p
     members:
       - router: pe1
         ifname: eth2
+      - router: srv
+        ifname: eth1
+
+  - name: pe2-srv
+    type: p2p
+    members:
       - router: pe2
         ifname: eth2
       - router: srv
-        ifname: eth1
+        ifname: eth2
 
 pings:
   - name: multihomed-server-to-remote-vtep
@@ -218,3 +222,4 @@ pings:
       router: srv
       address: 10.10.81.11
     to: 10.10.81.13
+    count: 5
