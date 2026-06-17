@@ -113,9 +113,10 @@ Flags:
 Use "frridge-mp [command] --help" for more information about a command.
 ```
 
-Every `frridge-mp` command auto-creates or updates the guest VM, mounts the
-requested host directory, and refreshes the guest-local `frridge` binary as
-needed.
+Every `frridge-mp` command auto-creates or updates the guest VM, mounts the requested host directory, and refreshes the guest-local `frridge` binary as needed.
+
+When the repo contains a companion `Dockerfile`, `frridge-mp` first tries to reuse host-side Docker cache by building and exporting the image on macOS, then imports that archive into the guest.
+If host Docker is unavailable, it falls back to building the image inside the guest VM.
 
 The common flow is:
 

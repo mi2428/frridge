@@ -120,11 +120,12 @@ type resolvedRequest struct {
 	guestWorkDir string
 }
 
-// Manager implements Service with the system Multipass CLI and a host-side Go
-// builder.
+// Manager implements Service with the system Multipass CLI plus host-side
+// builders.
 type Manager struct {
-	cli     multipassCLI
-	builder Builder
+	cli          multipassCLI
+	builder      Builder
+	imageBuilder ImageBuilder
 }
 
 // NewManager wires explicit Multipass and build dependencies together.
@@ -135,13 +136,31 @@ func NewManager(cli multipassCLI, builder Builder) *Manager {
 	}
 }
 
+// NewManagerWithImageBuilder wires explicit Multipass, binary build, and
+// companion image build dependencies together.
+func NewManagerWithImageBuilder(cli multipassCLI, builder Builder, imageBuilder ImageBuilder) *Manager {
+	return &Manager{
+		cli:          cli,
+		builder:      builder,
+		imageBuilder: imageBuilder,
+	}
+}
+
 // NewDefault constructs the production Multipass manager.
 func NewDefault() (*Manager, error) {
 	builder, err := NewGoBuilder("")
 	if err != nil {
 		return nil, err
 	}
-	return NewManager(newSystemCLI(), builder), nil
+	return NewManagerWithImageBuilder(newSystemCLI(), builder, defaultImageBuilder()), nil
+}
+
+func defaultImageBuilder() ImageBuilder {
+	imageBuilder, err := NewDockerImageBuilder("")
+	if err != nil {
+		return nil
+	}
+	return imageBuilder
 }
 
 // prepare makes sure the VM exists, the requested host directories are
@@ -231,7 +250,7 @@ func (m *Manager) ensure(ctx context.Context, req resolvedRequest) (Environment,
 		return Environment{}, err
 	}
 
-	build, err := m.guestBuild(ctx, req.instance.Name, req.repoDir)
+	build, goarch, err := m.guestBuild(ctx, req.instance.Name, req.repoDir)
 	if err != nil {
 		return Environment{}, err
 	}
@@ -267,7 +286,7 @@ func (m *Manager) ensure(ctx context.Context, req resolvedRequest) (Environment,
 	if err := m.bootstrapGuest(ctx, env); err != nil {
 		return Environment{}, err
 	}
-	if err := m.ensureGuestImage(ctx, env); err != nil {
+	if err := m.ensureGuestImage(ctx, env, goarch); err != nil {
 		return Environment{}, err
 	}
 	stagedBinary := path.Join(env.GuestBinaryDir, fmt.Sprintf(".frridge-%d.tmp", os.Getpid()))
@@ -311,9 +330,9 @@ func (m *Manager) ensureInstance(ctx context.Context, inst Instance) error {
 	return nil
 }
 
-// ensureGuestImage builds the repo's companion FRR image on the guest once so
+// ensureGuestImage refreshes the repo's companion FRR image inside the guest so
 // examples that reference frridge-frr:latest work on a fresh Multipass VM.
-func (m *Manager) ensureGuestImage(ctx context.Context, env Environment) error {
+func (m *Manager) ensureGuestImage(ctx context.Context, env Environment, goarch string) error {
 	if _, err := os.Stat(filepath.Join(env.RepoDir, "Dockerfile")); err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -321,32 +340,128 @@ func (m *Manager) ensureGuestImage(ctx context.Context, env Environment) error {
 		return fmt.Errorf("stat Dockerfile: %w", err)
 	}
 
+	buildID, err := imageBuildID(env.RepoDir, goarch)
+	if err != nil {
+		return err
+	}
+	currentID, err := m.guestImageBuildID(ctx, env, defaultGuestImage)
+	if err != nil {
+		return err
+	}
+	if currentID == buildID {
+		return nil
+	}
+
+	var hostErr error
+	if m.imageBuilder != nil {
+		build, err := m.imageBuilder.Build(ctx, env.RepoDir, goarch)
+		if err == nil {
+			if err := m.importGuestImageArchive(ctx, env, build); err == nil {
+				return nil
+			} else {
+				hostErr = err
+			}
+		} else {
+			hostErr = err
+		}
+	}
+
+	if err := m.buildGuestImage(ctx, env, buildID); err != nil {
+		if hostErr != nil {
+			return fmt.Errorf("refresh companion image via host cache: %v; guest fallback failed: %w", hostErr, err)
+		}
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) guestImageBuildID(ctx context.Context, env Environment, image string) (string, error) {
 	const script = `
 set -euo pipefail
-if ! sudo docker image inspect "$1" >/dev/null 2>&1; then
-  sudo docker buildx build --load -t "$1" .
+if sudo docker image inspect "$1" >/dev/null 2>&1; then
+  sudo docker image inspect --format "$2" "$1"
 fi
 `
 
+	out, err := m.cli.Output(ctx, env.InstanceName, ExecSpec{
+		Command: []string{
+			"bash",
+			"-lc",
+			strings.TrimSpace(script),
+			"bash",
+			image,
+			`{{ index .Config.Labels "` + guestImageBuildIDLabel + `" }}`,
+		},
+		Dir: env.GuestHostDir,
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (m *Manager) importGuestImageArchive(ctx context.Context, env Environment, build ImageBuildResult) error {
+	guestArchive := path.Join(env.GuestBinaryDir, "."+build.ID+".tar")
+	if err := m.cli.Transfer(ctx, build.Path, env.InstanceName+":"+guestArchive); err != nil {
+		return fmt.Errorf("transfer companion image archive: %w", err)
+	}
+
+	for _, command := range [][]string{
+		{"sudo", "docker", "load", "-i", guestArchive},
+		{"sudo", "docker", "image", "tag", build.Tag, defaultGuestImage},
+		{"rm", "-f", guestArchive},
+	} {
+		if err := m.cli.Exec(ctx, env.InstanceName, ExecSpec{
+			Command: command,
+			Dir:     env.GuestHostDir,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) buildGuestImage(ctx context.Context, env Environment, buildID string) error {
 	return m.cli.Exec(ctx, env.InstanceName, ExecSpec{
-		Command: []string{"bash", "-lc", strings.TrimSpace(script), "bash", defaultGuestImage},
-		Dir:     env.GuestRepoDir,
+		Command: []string{
+			"sudo",
+			"docker",
+			"buildx",
+			"build",
+			"--load",
+			"--label", guestImageBuildIDLabel + "=" + buildID,
+			"-t", defaultGuestImage,
+			".",
+		},
+		Dir: env.GuestRepoDir,
 	})
 }
 
-func (m *Manager) guestBuild(ctx context.Context, instance, repoDir string) (BuildResult, error) {
+func (m *Manager) guestBuild(ctx context.Context, instance, repoDir string) (BuildResult, string, error) {
+	goarch, err := m.guestGoArch(ctx, instance)
+	if err != nil {
+		return BuildResult{}, "", err
+	}
+	result, err := m.builder.Build(ctx, repoDir, goarch)
+	if err != nil {
+		return BuildResult{}, "", err
+	}
+	return result, goarch, nil
+}
+
+func (m *Manager) guestGoArch(ctx context.Context, instance string) (string, error) {
 	arch, err := m.cli.Output(ctx, instance, ExecSpec{
 		Command: []string{"uname", "-m"},
 	})
 	if err != nil {
-		return BuildResult{}, err
+		return "", err
 	}
 
 	goarch, err := mapGuestArch(arch)
 	if err != nil {
-		return BuildResult{}, err
+		return "", err
 	}
-	return m.builder.Build(ctx, repoDir, goarch)
+	return goarch, nil
 }
 
 func (m *Manager) ensureGuestDirs(ctx context.Context, env Environment) error {

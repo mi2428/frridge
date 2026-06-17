@@ -18,6 +18,7 @@ type fakeCLI struct {
 	missing     bool
 	info        Info
 	arch        string
+	imageBuilds map[string]string
 	launched    []Instance
 	started     []string
 	mounts      [][2]string
@@ -103,6 +104,14 @@ func (f *fakeCLI) Output(_ context.Context, _ string, spec ExecSpec) (string, er
 	if len(spec.Command) == 2 && spec.Command[0] == "uname" && spec.Command[1] == "-m" {
 		return f.arch, nil
 	}
+	if len(spec.Command) >= 6 && spec.Command[0] == "bash" && spec.Command[1] == "-lc" {
+		if strings.Contains(spec.Command[2], "docker image inspect") {
+			if buildID, ok := f.imageBuilds[spec.Command[4]]; ok {
+				return buildID + "\n", nil
+			}
+			return "", nil
+		}
+	}
 	return "", nil
 }
 
@@ -115,6 +124,22 @@ type fakeBuilder struct {
 func (b *fakeBuilder) Build(_ context.Context, repoDir, goarch string) (BuildResult, error) {
 	b.repo = repoDir
 	b.arch = goarch
+	return b.result, nil
+}
+
+type fakeImageBuilder struct {
+	result ImageBuildResult
+	repo   string
+	arch   string
+	err    error
+}
+
+func (b *fakeImageBuilder) Build(_ context.Context, repoDir, goarch string) (ImageBuildResult, error) {
+	b.repo = repoDir
+	b.arch = goarch
+	if b.err != nil {
+		return ImageBuildResult{}, b.err
+	}
 	return b.result, nil
 }
 
@@ -265,7 +290,7 @@ func TestManagerFrridgeWrapsGuestBinaryAndWorkDir(t *testing.T) {
 	}
 }
 
-func TestManagerPrepareBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
+func TestManagerPrepareImportsCompanionImageArchiveWhenHostCacheAvailable(t *testing.T) {
 	t.Parallel()
 
 	repoDir := t.TempDir()
@@ -287,7 +312,14 @@ func TestManagerPrepareBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 			Path: filepath.Join(t.TempDir(), "frridge"),
 		},
 	}
-	manager := NewManager(cli, builder)
+	imageBuilder := &fakeImageBuilder{
+		result: ImageBuildResult{
+			ID:   "image-amd64",
+			Path: filepath.Join(t.TempDir(), "image.tar"),
+			Tag:  "frridge-mp-cache:image-amd64",
+		},
+	}
+	manager := NewManagerWithImageBuilder(cli, builder, imageBuilder)
 
 	if _, err := manager.prepare(context.Background(), Request{
 		RepoDir: repoDir,
@@ -299,20 +331,171 @@ func TestManagerPrepareBuildsCompanionImageWhenDockerfileExists(t *testing.T) {
 		t.Fatalf("prepare() error = %v", err)
 	}
 
-	found := false
-	for _, spec := range cli.execs {
-		if spec.Dir != path.Join(defaultGuestMountRoot, shortHash(repoDir)) {
+	if imageBuilder.repo != repoDir {
+		t.Fatalf("imageBuilder repo = %q, want %q", imageBuilder.repo, repoDir)
+	}
+	if imageBuilder.arch != "amd64" {
+		t.Fatalf("imageBuilder arch = %q, want amd64", imageBuilder.arch)
+	}
+	if got, want := len(cli.transfers), 2; got != want {
+		t.Fatalf("len(transfers) = %d, want %d", got, want)
+	}
+
+	foundArchiveTransfer := false
+	wantArchiveTarget := "mp-lab:" + path.Join(defaultGuestBinaryRoot, "digest-amd64", ".image-amd64.tar")
+	for _, transfer := range cli.transfers {
+		if transfer[0] != imageBuilder.result.Path {
 			continue
 		}
-		script, ok := bashScript(spec)
-		if ok && strings.Contains(script, "docker buildx build --load -t \"$1\" .") {
-			found = true
+		foundArchiveTransfer = true
+		if got, want := transfer[1], wantArchiveTarget; got != want {
+			t.Fatalf("image archive target = %q, want %q", got, want)
+		}
+	}
+	if !foundArchiveTransfer {
+		t.Fatalf("prepare() did not transfer cached image archive: %#v", cli.transfers)
+	}
+
+	foundImport := false
+	for _, spec := range cli.execs {
+		if slices.Equal(spec.Command, []string{"sudo", "docker", "load", "-i", path.Join(defaultGuestBinaryRoot, "digest-amd64", ".image-amd64.tar")}) {
+			foundImport = true
+		}
+		if len(spec.Command) >= 4 && slices.Equal(spec.Command[:4], []string{"sudo", "docker", "buildx", "build"}) {
+			t.Fatalf("prepare() unexpectedly ran guest image build: %#v", cli.execs)
+		}
+	}
+	if !foundImport {
+		t.Fatalf("prepare() did not import cached companion image archive: %#v", cli.execs)
+	}
+}
+
+func TestManagerPrepareFallsBackToGuestImageBuildWhenHostCacheUnavailable(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(Dockerfile) error = %v", err)
+	}
+
+	hostDir := t.TempDir()
+	cli := &fakeCLI{
+		info: Info{
+			State:  "Running",
+			Mounts: make(map[string]string),
+		},
+		arch: "x86_64\n",
+	}
+	builder := &fakeBuilder{
+		result: BuildResult{
+			ID:   "digest-amd64",
+			Path: filepath.Join(t.TempDir(), "frridge"),
+		},
+	}
+	imageBuilder := &fakeImageBuilder{err: ErrHostDockerUnavailable}
+	manager := NewManagerWithImageBuilder(cli, builder, imageBuilder)
+
+	if _, err := manager.prepare(context.Background(), Request{
+		RepoDir: repoDir,
+		HostDir: hostDir,
+		Instance: Instance{
+			Name: "mp-lab",
+		},
+	}); err != nil {
+		t.Fatalf("prepare() error = %v", err)
+	}
+
+	if got, want := len(cli.transfers), 1; got != want {
+		t.Fatalf("len(transfers) = %d, want %d", got, want)
+	}
+
+	foundGuestBuild := false
+	for _, spec := range cli.execs {
+		if slices.Equal(spec.Command, []string{
+			"sudo",
+			"docker",
+			"buildx",
+			"build",
+			"--load",
+			"--label", guestImageBuildIDLabel + "=" + mustImageBuildID(t, repoDir, "amd64"),
+			"-t", defaultGuestImage,
+			".",
+		}) {
+			foundGuestBuild = true
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("prepare() did not run guest image bootstrap command: %#v", cli.execs)
+	if !foundGuestBuild {
+		t.Fatalf("prepare() did not fall back to guest image build: %#v", cli.execs)
 	}
+}
+
+func TestManagerPrepareSkipsCompanionImageRefreshWhenGuestImageMatchesBuildID(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(Dockerfile) error = %v", err)
+	}
+	buildID, err := imageBuildID(repoDir, "amd64")
+	if err != nil {
+		t.Fatalf("imageBuildID() error = %v", err)
+	}
+
+	hostDir := t.TempDir()
+	cli := &fakeCLI{
+		info: Info{
+			State:  "Running",
+			Mounts: make(map[string]string),
+		},
+		arch: "x86_64\n",
+		imageBuilds: map[string]string{
+			defaultGuestImage: buildID,
+		},
+	}
+	builder := &fakeBuilder{
+		result: BuildResult{
+			ID:   "digest-amd64",
+			Path: filepath.Join(t.TempDir(), "frridge"),
+		},
+	}
+	imageBuilder := &fakeImageBuilder{}
+	manager := NewManagerWithImageBuilder(cli, builder, imageBuilder)
+
+	if _, err := manager.prepare(context.Background(), Request{
+		RepoDir: repoDir,
+		HostDir: hostDir,
+		Instance: Instance{
+			Name: "mp-lab",
+		},
+	}); err != nil {
+		t.Fatalf("prepare() error = %v", err)
+	}
+
+	if imageBuilder.repo != "" || imageBuilder.arch != "" {
+		t.Fatalf("imageBuilder unexpectedly ran: repo=%q arch=%q", imageBuilder.repo, imageBuilder.arch)
+	}
+	if got, want := len(cli.transfers), 1; got != want {
+		t.Fatalf("len(transfers) = %d, want %d", got, want)
+	}
+	for _, spec := range cli.execs {
+		if len(spec.Command) >= 4 && slices.Equal(spec.Command[:4], []string{"sudo", "docker", "buildx", "build"}) {
+			t.Fatalf("prepare() unexpectedly refreshed companion image: %#v", cli.execs)
+		}
+		if len(spec.Command) >= 4 && slices.Equal(spec.Command[:4], []string{"sudo", "docker", "load", "-i"}) {
+			t.Fatalf("prepare() unexpectedly refreshed companion image: %#v", cli.execs)
+		}
+	}
+}
+
+func mustImageBuildID(t *testing.T, repoDir, goarch string) string {
+	t.Helper()
+
+	id, err := imageBuildID(repoDir, goarch)
+	if err != nil {
+		t.Fatalf("imageBuildID() error = %v", err)
+	}
+	return id
 }
 
 func TestManagerPrepareBootstrapsMPLSKernelSupport(t *testing.T) {
