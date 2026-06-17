@@ -177,6 +177,11 @@ routers:
       vrfs:
         - name: tenant           # optional Linux VRF device
           table: 1100
+      bonds:
+        - name: bond0            # optional Linux bond device
+          mode: active-backup
+          master: br10           # optional upper device for the bond itself
+          interfaces: [eth2]     # optional existing router interfaces enslaved to the bond
       interfaces:
         - name: eth3             # optional existing interface to re-home or address
           master: tenant

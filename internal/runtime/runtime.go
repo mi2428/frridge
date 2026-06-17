@@ -361,6 +361,11 @@ func (m *Manager) configureLinux(ctx context.Context, routers map[string]config.
 				return fmt.Errorf("router %q bridge %q: %w", routerName, bridge.Name, err)
 			}
 		}
+		for _, bond := range routers[routerName].Linux.Bonds {
+			if err := m.configureLinuxBond(ctx, container.ID, bond); err != nil {
+				return fmt.Errorf("router %q bond %q: %w", routerName, bond.Name, err)
+			}
+		}
 		for _, iface := range routers[routerName].Linux.Interfaces {
 			if err := m.configureLinuxInterface(ctx, container.ID, iface); err != nil {
 				return fmt.Errorf("router %q interface %q: %w", routerName, iface.Name, err)
@@ -386,6 +391,37 @@ func (m *Manager) configureLinuxVRF(ctx context.Context, containerID string, vrf
 	}
 	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", vrf.Name, "up"}, "bring vrf up"); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (m *Manager) configureLinuxBond(ctx context.Context, containerID string, bond config.Bond) error {
+	if err := m.runExec(ctx, containerID, bondCommand(bond), "create bond"); err != nil {
+		return err
+	}
+	if err := m.configureLinkAttrs(ctx, containerID, bond.Name, "", bond.MAC, bond.AddrGenMode, bond.Addresses); err != nil {
+		return err
+	}
+	for _, iface := range bond.Interfaces {
+		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "down"}, "bring bond slave down"); err != nil {
+			return err
+		}
+		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "master", bond.Name}, "attach interface to bond"); err != nil {
+			return err
+		}
+	}
+	for _, iface := range bond.Interfaces {
+		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "up"}, "bring bond slave up"); err != nil {
+			return err
+		}
+	}
+	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bond.Name, "up"}, "bring bond up"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(bond.Master) != "" {
+		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bond.Name, "master", bond.Master}, "attach bond to master"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -825,6 +861,14 @@ func routeCommand(route config.Route) []string {
 		command = append(command, "dev", route.Dev)
 	}
 	return command
+}
+
+func bondCommand(bond config.Bond) []string {
+	return []string{
+		"ip", "link", "add", "name", bond.Name,
+		"type", "bond",
+		"mode", bond.Mode,
+	}
 }
 
 func vxlanCommand(vxlan config.VXLAN) []string {

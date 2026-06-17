@@ -98,6 +98,7 @@ type Command struct {
 // automatically after interfaces and loopbacks exist.
 type Linux struct {
 	VRFs       []VRF       `yaml:"vrfs" json:"vrfs,omitempty"`
+	Bonds      []Bond      `yaml:"bonds" json:"bonds,omitempty"`
 	Interfaces []Interface `yaml:"interfaces" json:"interfaces,omitempty"`
 	Veths      []Veth      `yaml:"veths" json:"veths,omitempty"`
 	Routes     []Route     `yaml:"routes" json:"routes,omitempty"`
@@ -115,6 +116,17 @@ type Route struct {
 	To  string `yaml:"to" json:"to"`
 	Via string `yaml:"via" json:"via,omitempty"`
 	Dev string `yaml:"dev" json:"dev,omitempty"`
+}
+
+// Bond describes one Linux bonding interface and its slave interfaces.
+type Bond struct {
+	Name        string   `yaml:"name" json:"name"`
+	Mode        string   `yaml:"mode" json:"mode"`
+	Master      string   `yaml:"master" json:"master,omitempty"`
+	MAC         string   `yaml:"mac" json:"mac,omitempty"`
+	AddrGenMode string   `yaml:"addrgenmode" json:"addrgenmode,omitempty"`
+	Addresses   []string `yaml:"addresses" json:"addresses,omitempty"`
+	Interfaces  []string `yaml:"interfaces" json:"interfaces,omitempty"`
 }
 
 // Interface describes one existing Linux interface that should be configured
@@ -559,7 +571,7 @@ func (t *Topology) Digest() (string, error) {
 func validateLinux(routerName string, linux Linux) error {
 	createdDevices := make(map[string]string)
 	namespaceNames := make(map[string]string)
-	bridgeInterfaces := make(map[string]string)
+	enslavedInterfaces := make(map[string]string)
 	interfaceNames := make(map[string]struct{}, len(linux.Interfaces))
 	vethPeerNames := make(map[string]struct{}, len(linux.Veths))
 
@@ -572,6 +584,30 @@ func validateLinux(routerName string, linux Linux) error {
 		}
 		if err := claimLinuxDevice(routerName, createdDevices, vrf.Name, "vrf"); err != nil {
 			return err
+		}
+	}
+
+	for _, bond := range linux.Bonds {
+		if strings.TrimSpace(bond.Name) == "" {
+			return fmt.Errorf("router %q has a bond with empty name", routerName)
+		}
+		if strings.TrimSpace(bond.Mode) == "" {
+			return fmt.Errorf("router %q bond %q has empty mode", routerName, bond.Name)
+		}
+		if err := claimLinuxDevice(routerName, createdDevices, bond.Name, "bond"); err != nil {
+			return err
+		}
+		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("bond %q", bond.Name), bond.MAC, bond.AddrGenMode, bond.Addresses); err != nil {
+			return err
+		}
+		for _, iface := range bond.Interfaces {
+			if strings.TrimSpace(iface) == "" {
+				return fmt.Errorf("router %q bond %q references an empty interface", routerName, bond.Name)
+			}
+			if owner, ok := enslavedInterfaces[iface]; ok {
+				return fmt.Errorf("router %q reuses interface %q across linux dataplane attachments %q and %q", routerName, iface, owner, bond.Name)
+			}
+			enslavedInterfaces[iface] = bond.Name
 		}
 	}
 
@@ -641,10 +677,10 @@ func validateLinux(routerName string, linux Linux) error {
 			if strings.TrimSpace(iface) == "" {
 				return fmt.Errorf("router %q bridge %q references an empty interface", routerName, bridge.Name)
 			}
-			if owner, ok := bridgeInterfaces[iface]; ok {
-				return fmt.Errorf("router %q reuses interface %q across linux bridges %q and %q", routerName, iface, owner, bridge.Name)
+			if owner, ok := enslavedInterfaces[iface]; ok {
+				return fmt.Errorf("router %q reuses interface %q across linux dataplane attachments %q and %q", routerName, iface, owner, bridge.Name)
 			}
-			bridgeInterfaces[iface] = bridge.Name
+			enslavedInterfaces[iface] = bridge.Name
 		}
 		for _, vxlan := range bridge.VXLANS {
 			if strings.TrimSpace(vxlan.Name) == "" {
@@ -746,10 +782,22 @@ func defaultRouterSysctls() map[string]string {
 func copyLinux(linux Linux) Linux {
 	result := Linux{
 		VRFs:       append([]VRF(nil), linux.VRFs...),
+		Bonds:      make([]Bond, 0, len(linux.Bonds)),
 		Interfaces: make([]Interface, 0, len(linux.Interfaces)),
 		Veths:      make([]Veth, 0, len(linux.Veths)),
 		Routes:     append([]Route(nil), linux.Routes...),
 		Bridges:    make([]Bridge, 0, len(linux.Bridges)),
+	}
+	for _, bond := range linux.Bonds {
+		result.Bonds = append(result.Bonds, Bond{
+			Name:        bond.Name,
+			Mode:        bond.Mode,
+			Master:      bond.Master,
+			MAC:         bond.MAC,
+			AddrGenMode: bond.AddrGenMode,
+			Addresses:   append([]string(nil), bond.Addresses...),
+			Interfaces:  append([]string(nil), bond.Interfaces...),
+		})
 	}
 	for _, iface := range linux.Interfaces {
 		result.Interfaces = append(result.Interfaces, Interface{

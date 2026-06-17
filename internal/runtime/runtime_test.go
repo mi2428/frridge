@@ -155,6 +155,18 @@ func TestRouteCommandIncludesViaAndDevice(t *testing.T) {
 	}
 }
 
+func TestBondCommandCreatesNamedBondWithMode(t *testing.T) {
+	t.Parallel()
+
+	command := bondCommand(config.Bond{
+		Name: "bond0",
+		Mode: "active-backup",
+	})
+	if got, want := strings.Join(command, "\x00"), strings.Join([]string{"ip", "link", "add", "name", "bond0", "type", "bond", "mode", "active-backup"}, "\x00"); got != want {
+		t.Fatalf("bondCommand() = %#v, want %#v", command, []string{"ip", "link", "add", "name", "bond0", "type", "bond", "mode", "active-backup"})
+	}
+}
+
 func TestVXLANCommandUsesEVPNFriendlyDefaults(t *testing.T) {
 	t.Parallel()
 
@@ -195,7 +207,7 @@ func TestHasDaemonsRequiresEveryExpectedDaemon(t *testing.T) {
 	}
 }
 
-func TestConfigureLinuxVRFsInterfacesVethsBridgesAndRoutes(t *testing.T) {
+func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 	t.Parallel()
 
 	fakeDocker := &fakeDockerClient{}
@@ -212,7 +224,6 @@ func TestConfigureLinuxVRFsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 						Master:      "tenant",
 						MAC:         "02:00:00:00:50:11",
 						AddrGenMode: "none",
-						Interfaces:  []string{"eth2"},
 						VXLANS: []config.VXLAN{
 							{
 								Name:        "vxlan5000",
@@ -226,6 +237,14 @@ func TestConfigureLinuxVRFsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 								},
 							},
 						},
+					},
+				},
+				Bonds: []config.Bond{
+					{
+						Name:       "bond0",
+						Mode:       "active-backup",
+						Master:     "br5000",
+						Interfaces: []string{"eth2"},
 					},
 				},
 				Interfaces: []config.Interface{
@@ -278,13 +297,17 @@ func TestConfigureLinuxVRFsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 		{"ip", "link", "set", "dev", "br5000", "addrgenmode", "none"},
 		{"ip", "link", "set", "dev", "br5000", "address", "02:00:00:00:50:11"},
 		{"ip", "link", "set", "dev", "br5000", "up"},
-		{"ip", "link", "set", "dev", "eth2", "master", "br5000"},
-		{"ip", "link", "set", "dev", "eth2", "up"},
 		{"ip", "link", "add", "name", "vxlan5000", "type", "vxlan", "id", "5000", "local", "10.255.0.11", "dstport", "4789", "nolearning"},
 		{"ip", "link", "set", "dev", "vxlan5000", "master", "br5000"},
 		{"ip", "link", "set", "dev", "vxlan5000", "addrgenmode", "none"},
 		{"ip", "link", "set", "dev", "vxlan5000", "type", "bridge_slave", "neigh_suppress", "on", "learning", "off"},
 		{"ip", "link", "set", "dev", "vxlan5000", "up"},
+		{"ip", "link", "add", "name", "bond0", "type", "bond", "mode", "active-backup"},
+		{"ip", "link", "set", "dev", "eth2", "down"},
+		{"ip", "link", "set", "dev", "eth2", "master", "bond0"},
+		{"ip", "link", "set", "dev", "eth2", "up"},
+		{"ip", "link", "set", "dev", "bond0", "up"},
+		{"ip", "link", "set", "dev", "bond0", "master", "br5000"},
 		{"ip", "link", "set", "dev", "eth3", "master", "tenant"},
 		{"ip", "addr", "replace", "10.20.30.1/24", "dev", "eth3"},
 		{"ip", "link", "set", "dev", "eth3", "up"},
