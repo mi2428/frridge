@@ -1,0 +1,550 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-all-route-types-anycast-clos
+  workdir: .frridge
+
+routers:
+  sp1:
+    loopbacks:
+      - 10.255.97.1/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp1
+          router bgp 65000
+           bgp router-id 10.255.97.1
+           bgp cluster-id 10.255.97.1
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.97.0 remote-as 65000
+           neighbor 10.0.97.4 remote-as 65000
+           neighbor 10.0.97.8 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.97.1/32
+            neighbor 10.0.97.0 activate
+            neighbor 10.0.97.0 route-reflector-client
+            neighbor 10.0.97.0 next-hop-self force
+            neighbor 10.0.97.4 activate
+            neighbor 10.0.97.4 route-reflector-client
+            neighbor 10.0.97.4 next-hop-self force
+            neighbor 10.0.97.8 activate
+            neighbor 10.0.97.8 route-reflector-client
+            neighbor 10.0.97.8 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.97.0 activate
+            neighbor 10.0.97.0 route-reflector-client
+            neighbor 10.0.97.4 activate
+            neighbor 10.0.97.4 route-reflector-client
+            neighbor 10.0.97.8 activate
+            neighbor 10.0.97.8 route-reflector-client
+           exit-address-family
+          end
+
+  sp2:
+    loopbacks:
+      - 10.255.97.2/32
+    commands:
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp2
+          router bgp 65000
+           bgp router-id 10.255.97.2
+           bgp cluster-id 10.255.97.2
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.97.2 remote-as 65000
+           neighbor 10.0.97.6 remote-as 65000
+           neighbor 10.0.97.10 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.97.2/32
+            neighbor 10.0.97.2 activate
+            neighbor 10.0.97.2 route-reflector-client
+            neighbor 10.0.97.2 next-hop-self force
+            neighbor 10.0.97.6 activate
+            neighbor 10.0.97.6 route-reflector-client
+            neighbor 10.0.97.6 next-hop-self force
+            neighbor 10.0.97.10 activate
+            neighbor 10.0.97.10 route-reflector-client
+            neighbor 10.0.97.10 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.97.2 activate
+            neighbor 10.0.97.2 route-reflector-client
+            neighbor 10.0.97.6 activate
+            neighbor 10.0.97.6 route-reflector-client
+            neighbor 10.0.97.10 activate
+            neighbor 10.0.97.10 route-reflector-client
+           exit-address-family
+          end
+
+  lf1:
+    loopbacks:
+      - 10.255.97.11/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1100
+      bonds:
+        - name: bond0
+          mode: active-backup
+          interfaces: [eth3]
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:97:50:11
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.97.11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+        - name: br10
+          master: tenant
+          mac: 02:00:00:10:40:01
+          addrgenmode: none
+          addresses: [10.10.40.1/24]
+          interfaces: [bond0]
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.97.11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      interfaces:
+        - name: eth4
+          master: tenant
+          addresses: [10.10.51.1/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          bridge fdb replace 02:00:00:10:40:01 dev br10 self local
+          ip neigh replace 10.10.40.11 lladdr 02:00:00:10:40:11 dev br10 nud permanent
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname lf1
+          router bgp 65000
+           bgp router-id 10.255.97.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.97.1 remote-as 65000
+           neighbor 10.0.97.3 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.97.11/32
+            neighbor 10.0.97.1 activate
+            neighbor 10.0.97.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.97.1 activate
+            neighbor 10.0.97.3 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          ip prefix-list LF1-T5 permit 10.10.51.0/24
+          route-map LF1-T5 permit 10
+           match ip address prefix-list LF1-T5
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.97.11
+           address-family ipv4 unicast
+            redistribute connected route-map LF1-T5
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          exit
+          interface bond0
+           evpn mh es-id 1
+           evpn mh es-sys-mac 02:00:00:00:97:aa
+           evpn mh es-df-pref 200
+          end
+
+  lf2:
+    loopbacks:
+      - 10.255.97.12/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1200
+      bonds:
+        - name: bond0
+          mode: active-backup
+          interfaces: [eth3]
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:97:50:12
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.97.12
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+        - name: br10
+          master: tenant
+          mac: 02:00:00:10:40:01
+          addrgenmode: none
+          addresses: [10.10.40.1/24]
+          interfaces: [bond0]
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.97.12
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      interfaces:
+        - name: eth4
+          master: tenant
+          addresses: [10.10.52.1/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          bridge fdb replace 02:00:00:10:40:01 dev br10 self local
+          ip neigh replace 10.10.40.11 lladdr 02:00:00:10:40:11 dev br10 nud permanent
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname lf2
+          router bgp 65000
+           bgp router-id 10.255.97.12
+           no bgp default ipv4-unicast
+           neighbor 10.0.97.5 remote-as 65000
+           neighbor 10.0.97.7 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.97.12/32
+            neighbor 10.0.97.5 activate
+            neighbor 10.0.97.7 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.97.5 activate
+            neighbor 10.0.97.7 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          ip prefix-list LF2-T5 permit 10.10.52.0/24
+          route-map LF2-T5 permit 10
+           match ip address prefix-list LF2-T5
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.97.12
+           address-family ipv4 unicast
+            redistribute connected route-map LF2-T5
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          exit
+          interface bond0
+           evpn mh es-id 1
+           evpn mh es-sys-mac 02:00:00:00:97:aa
+           evpn mh es-df-pref 100
+          end
+
+  lf3:
+    loopbacks:
+      - 10.255.97.13/32
+    linux:
+      vrfs:
+        - name: tenant
+          table: 1300
+      bridges:
+        - name: br5000
+          master: tenant
+          mac: 02:00:00:97:50:13
+          addrgenmode: none
+          vxlans:
+            - name: vxlan5000
+              vni: 5000
+              local: 10.255.97.13
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+        - name: br10
+          master: tenant
+          mac: 02:00:00:10:40:01
+          addrgenmode: none
+          addresses: [10.10.40.1/24]
+          interfaces: [eth3]
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.97.13
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                neighSuppress: true
+                learning: false
+      interfaces:
+        - name: eth4
+          master: tenant
+          addresses: [10.10.53.1/24]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          bridge fdb replace 02:00:00:10:40:01 dev br10 self local
+      - kind: vtysh
+        run: |
+          configure terminal
+          vrf tenant
+           vni 5000
+          exit-vrf
+          hostname lf3
+          router bgp 65000
+           bgp router-id 10.255.97.13
+           no bgp default ipv4-unicast
+           neighbor 10.0.97.9 remote-as 65000
+           neighbor 10.0.97.11 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.97.13/32
+            neighbor 10.0.97.9 activate
+            neighbor 10.0.97.11 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.97.9 activate
+            neighbor 10.0.97.11 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          ip prefix-list LF3-T5 permit 10.10.53.0/24
+          route-map LF3-T5 permit 10
+           match ip address prefix-list LF3-T5
+          router bgp 65000 vrf tenant
+           bgp router-id 10.255.97.13
+           address-family ipv4 unicast
+            redistribute connected route-map LF3-T5
+           exit-address-family
+           address-family l2vpn evpn
+            advertise ipv4 unicast
+           exit-address-family
+          end
+
+  srv:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bonds:
+        - name: bond0
+          mode: active-backup
+          mac: 02:00:00:10:40:11
+          addresses: [10.10.40.11/24]
+          interfaces: [eth1, eth2]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.40.1
+          ping -c 1 -W 1 10.10.40.254 >/dev/null 2>&1 || true
+
+  host31:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.40.1
+          ping -c 1 -W 1 10.10.40.254 >/dev/null 2>&1 || true
+
+  svc11:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.51.1
+
+  svc21:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.52.1
+
+  svc31:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ip route replace default via 10.10.53.1
+
+links:
+  - name: lf1-sp1
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth1
+        ipv4: 10.0.97.0/31
+      - router: sp1
+        ifname: eth1
+        ipv4: 10.0.97.1/31
+
+  - name: lf1-sp2
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth2
+        ipv4: 10.0.97.2/31
+      - router: sp2
+        ifname: eth1
+        ipv4: 10.0.97.3/31
+
+  - name: lf2-sp1
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth1
+        ipv4: 10.0.97.4/31
+      - router: sp1
+        ifname: eth2
+        ipv4: 10.0.97.5/31
+
+  - name: lf2-sp2
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth2
+        ipv4: 10.0.97.6/31
+      - router: sp2
+        ifname: eth2
+        ipv4: 10.0.97.7/31
+
+  - name: lf3-sp1
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth1
+        ipv4: 10.0.97.8/31
+      - router: sp1
+        ifname: eth3
+        ipv4: 10.0.97.9/31
+
+  - name: lf3-sp2
+    type: p2p
+    members:
+      - router: lf3
+        ifname: eth2
+        ipv4: 10.0.97.10/31
+      - router: sp2
+        ifname: eth3
+        ipv4: 10.0.97.11/31
+
+  - name: lf1-srv
+    type: p2p
+    members:
+      - router: lf1
+        ifname: eth3
+      - router: srv
+        ifname: eth1
+
+  - name: lf2-srv
+    type: p2p
+    members:
+      - router: lf2
+        ifname: eth3
+      - router: srv
+        ifname: eth2
+
+  - name: lf3-access
+    type: bridge
+    members:
+      - router: lf3
+        ifname: eth3
+      - router: host31
+        ifname: eth1
+        ipv4: 10.10.40.31/24
+        mac: 02:00:00:10:40:31
+
+  - name: lf1-services
+    type: bridge
+    members:
+      - router: lf1
+        ifname: eth4
+      - router: svc11
+        ifname: eth1
+        ipv4: 10.10.51.11/24
+        mac: 02:00:00:10:51:11
+
+  - name: lf2-services
+    type: bridge
+    members:
+      - router: lf2
+        ifname: eth4
+      - router: svc21
+        ifname: eth1
+        ipv4: 10.10.52.11/24
+        mac: 02:00:00:10:52:11
+
+  - name: lf3-services
+    type: bridge
+    members:
+      - router: lf3
+        ifname: eth4
+      - router: svc31
+        ifname: eth1
+        ipv4: 10.10.53.11/24
+        mac: 02:00:00:10:53:11
+
+pings:
+  - name: srv-to-host31
+    from:
+      router: srv
+      address: 10.10.40.11
+    to: 10.10.40.31
+    count: 5
+
+  - name: srv-to-svc31
+    from:
+      router: srv
+      address: 10.10.40.11
+    to: 10.10.53.11
+    count: 5
+
+  - name: host31-to-svc11
+    from:
+      router: host31
+      address: 10.10.40.31
+    to: 10.10.51.11
+    count: 5
+
+  - name: svc11-to-svc21
+    from:
+      router: svc11
+      address: 10.10.51.11
+    to: 10.10.52.11
+    count: 5
