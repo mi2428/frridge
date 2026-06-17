@@ -39,6 +39,15 @@ var addrGenModes = map[string]struct{}{
 	"stable_secret": {},
 	"random":        {},
 }
+var bondModes = map[string]struct{}{
+	"balance-rr":    {},
+	"active-backup": {},
+	"balance-xor":   {},
+	"broadcast":     {},
+	"802.3ad":       {},
+	"balance-tlb":   {},
+	"balance-alb":   {},
+}
 
 // Topology is the fully decoded lab definition together with source-path
 // metadata used for resolving relative paths on disk.
@@ -171,7 +180,7 @@ type VXLAN struct {
 	DstPort     int                `yaml:"dstport" json:"dstport,omitempty"`
 	NoLearning  bool               `yaml:"nolearning" json:"nolearning,omitempty"`
 	AddrGenMode string             `yaml:"addrgenmode" json:"addrgenmode,omitempty"`
-	BridgeSlave BridgeSlaveOptions `yaml:"bridgeSlave" json:"bridgeSlave,omitempty"`
+	BridgeSlave BridgeSlaveOptions `yaml:"bridgeSlave" json:"bridgeSlave"`
 }
 
 // BridgeSlaveOptions describes optional per-port bridge_slave settings applied
@@ -571,7 +580,7 @@ func (t *Topology) Digest() (string, error) {
 func validateLinux(routerName string, linux Linux) error {
 	createdDevices := make(map[string]string)
 	namespaceNames := make(map[string]string)
-	enslavedInterfaces := make(map[string]string)
+	masterAssignments := make(map[string]linuxMasterAssignment)
 	interfaceNames := make(map[string]struct{}, len(linux.Interfaces))
 	vethPeerNames := make(map[string]struct{}, len(linux.Veths))
 
@@ -594,20 +603,25 @@ func validateLinux(routerName string, linux Linux) error {
 		if strings.TrimSpace(bond.Mode) == "" {
 			return fmt.Errorf("router %q bond %q has empty mode", routerName, bond.Name)
 		}
+		if _, ok := bondModes[bond.Mode]; !ok {
+			return fmt.Errorf("router %q bond %q has unsupported mode %q", routerName, bond.Name, bond.Mode)
+		}
 		if err := claimLinuxDevice(routerName, createdDevices, bond.Name, "bond"); err != nil {
 			return err
 		}
 		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("bond %q", bond.Name), bond.MAC, bond.AddrGenMode, bond.Addresses); err != nil {
 			return err
 		}
+		if err := claimLinuxMaster(routerName, masterAssignments, bond.Name, bond.Master, fmt.Sprintf("bond %q", bond.Name)); err != nil {
+			return err
+		}
 		for _, iface := range bond.Interfaces {
 			if strings.TrimSpace(iface) == "" {
 				return fmt.Errorf("router %q bond %q references an empty interface", routerName, bond.Name)
 			}
-			if owner, ok := enslavedInterfaces[iface]; ok {
-				return fmt.Errorf("router %q reuses interface %q across linux dataplane attachments %q and %q", routerName, iface, owner, bond.Name)
+			if err := claimLinuxMaster(routerName, masterAssignments, iface, bond.Name, fmt.Sprintf("bond %q", bond.Name)); err != nil {
+				return err
 			}
-			enslavedInterfaces[iface] = bond.Name
 		}
 	}
 
@@ -620,6 +634,9 @@ func validateLinux(routerName string, linux Linux) error {
 		}
 		interfaceNames[iface.Name] = struct{}{}
 		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("interface %q", iface.Name), iface.MAC, iface.AddrGenMode, iface.Addresses); err != nil {
+			return err
+		}
+		if err := claimLinuxMaster(routerName, masterAssignments, iface.Name, iface.Master, fmt.Sprintf("interface %q", iface.Name)); err != nil {
 			return err
 		}
 	}
@@ -644,6 +661,9 @@ func validateLinux(routerName string, linux Linux) error {
 		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("veth %q", veth.Name), veth.MAC, veth.AddrGenMode, veth.Addresses); err != nil {
 			return err
 		}
+		if err := claimLinuxMaster(routerName, masterAssignments, veth.Name, veth.Master, fmt.Sprintf("veth %q", veth.Name)); err != nil {
+			return err
+		}
 		if veth.Namespace != nil {
 			if err := validateLinuxNamespace(routerName, fmt.Sprintf("veth %q", veth.Name), *veth.Namespace, namespaceNames); err != nil {
 				return err
@@ -654,6 +674,9 @@ func validateLinux(routerName string, linux Linux) error {
 	for _, route := range linux.Routes {
 		if strings.TrimSpace(route.To) == "" {
 			return fmt.Errorf("router %q has a linux route with empty to", routerName)
+		}
+		if _, _, err := net.ParseCIDR(route.To); err != nil {
+			return fmt.Errorf("router %q route %q has invalid to %q: %w", routerName, route.To, route.To, err)
 		}
 		if strings.TrimSpace(route.Via) == "" && strings.TrimSpace(route.Dev) == "" {
 			return fmt.Errorf("router %q route %q must set via, dev, or both", routerName, route.To)
@@ -673,14 +696,16 @@ func validateLinux(routerName string, linux Linux) error {
 		if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("bridge %q", bridge.Name), bridge.MAC, bridge.AddrGenMode, bridge.Addresses); err != nil {
 			return err
 		}
+		if err := claimLinuxMaster(routerName, masterAssignments, bridge.Name, bridge.Master, fmt.Sprintf("bridge %q", bridge.Name)); err != nil {
+			return err
+		}
 		for _, iface := range bridge.Interfaces {
 			if strings.TrimSpace(iface) == "" {
 				return fmt.Errorf("router %q bridge %q references an empty interface", routerName, bridge.Name)
 			}
-			if owner, ok := enslavedInterfaces[iface]; ok {
-				return fmt.Errorf("router %q reuses interface %q across linux dataplane attachments %q and %q", routerName, iface, owner, bridge.Name)
+			if err := claimLinuxMaster(routerName, masterAssignments, iface, bridge.Name, fmt.Sprintf("bridge %q", bridge.Name)); err != nil {
+				return err
 			}
-			enslavedInterfaces[iface] = bridge.Name
 		}
 		for _, vxlan := range bridge.VXLANS {
 			if strings.TrimSpace(vxlan.Name) == "" {
@@ -701,6 +726,9 @@ func validateLinux(routerName string, linux Linux) error {
 			if err := validateAddrGenMode(routerName, fmt.Sprintf("bridge %q vxlan %q", bridge.Name, vxlan.Name), vxlan.AddrGenMode); err != nil {
 				return err
 			}
+			if err := claimLinuxMaster(routerName, masterAssignments, vxlan.Name, bridge.Name, fmt.Sprintf("bridge %q vxlan %q", bridge.Name, vxlan.Name)); err != nil {
+				return err
+			}
 		}
 		for _, namespace := range bridge.Namespaces {
 			if err := validateLinuxNamespace(routerName, fmt.Sprintf("bridge %q", bridge.Name), namespace, namespaceNames); err != nil {
@@ -709,6 +737,32 @@ func validateLinux(routerName string, linux Linux) error {
 		}
 	}
 
+	return nil
+}
+
+type linuxMasterAssignment struct {
+	master string
+	owner  string
+}
+
+func claimLinuxMaster(routerName string, assignments map[string]linuxMasterAssignment, linkName, master, owner string) error {
+	linkName = strings.TrimSpace(linkName)
+	master = strings.TrimSpace(master)
+	if linkName == "" || master == "" {
+		return nil
+	}
+
+	if previous, ok := assignments[linkName]; ok {
+		if previous.master == master {
+			return fmt.Errorf("router %q assigns linux master %q to link %q multiple times via %s and %s", routerName, master, linkName, previous.owner, owner)
+		}
+		return fmt.Errorf("router %q assigns conflicting linux masters to link %q via %s -> %q and %s -> %q", routerName, linkName, previous.owner, previous.master, owner, master)
+	}
+
+	assignments[linkName] = linuxMasterAssignment{
+		master: master,
+		owner:  owner,
+	}
 	return nil
 }
 

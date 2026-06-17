@@ -407,8 +407,90 @@ func TestValidateRejectsDuplicateLinuxDataplaneInterfaceAttachment(t *testing.T)
 	}
 
 	err := topology.Validate()
-	if err == nil || !strings.Contains(err.Error(), `reuses interface "eth1" across linux dataplane attachments`) {
-		t.Fatalf("Validate() error = %v, want duplicate dataplane attachment error", err)
+	if err == nil || !strings.Contains(err.Error(), `assigns conflicting linux masters to link "eth1"`) {
+		t.Fatalf("Validate() error = %v, want conflicting linux master assignment", err)
+	}
+}
+
+func TestValidateRejectsConflictingLinuxMasterAssignments(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name   string
+		linux  Linux
+		target string
+	}{
+		{
+			name: "bridge slave also configured with another master",
+			linux: Linux{
+				Bridges: []Bridge{
+					{
+						Name:       "br10",
+						Interfaces: []string{"eth1"},
+					},
+				},
+				Interfaces: []Interface{
+					{
+						Name:   "eth1",
+						Master: "tenant",
+					},
+				},
+			},
+			target: `link "eth1"`,
+		},
+		{
+			name: "vxlan auto-bridge conflicts with explicit interface master",
+			linux: Linux{
+				Bridges: []Bridge{
+					{
+						Name: "br10",
+						VXLANS: []VXLAN{
+							{
+								Name: "vxlan100",
+								VNI:  100,
+							},
+						},
+					},
+				},
+				Interfaces: []Interface{
+					{
+						Name:   "vxlan100",
+						Master: "tenant",
+					},
+				},
+			},
+			target: `link "vxlan100"`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			topology := &Topology{
+				APIVersion: APIVersion,
+				Lab:        Lab{Name: "linux-lab"},
+				Routers: map[string]Router{
+					"r1": {Linux: tc.linux},
+					"r2": {},
+				},
+				Links: []Link{
+					{
+						Name: "fabric",
+						Type: "p2p",
+						Members: []LinkMember{
+							{Router: "r1", IfName: "eth1"},
+							{Router: "r2", IfName: "eth1"},
+						},
+					},
+				},
+			}
+
+			err := topology.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.target) || !strings.Contains(err.Error(), "assigns conflicting linux masters") {
+				t.Fatalf("Validate() error = %v, want conflicting linux master assignment for %s", err, tc.target)
+			}
+		})
 	}
 }
 

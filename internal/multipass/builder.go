@@ -14,6 +14,11 @@ import (
 	"strings"
 )
 
+var sourceDigestExtraFiles = []string{
+	filepath.Join("internal", "multipass", "cloud-init.yaml.tmpl"),
+	filepath.Join("internal", "multipass", "guest-bootstrap.sh"),
+}
+
 // GoBuilder cross-compiles the Linux frridge binary on the host and caches the
 // result below the user cache directory.
 type GoBuilder struct {
@@ -33,8 +38,8 @@ func NewGoBuilder(cacheDir string) (*GoBuilder, error) {
 	return &GoBuilder{cacheDir: cacheDir}, nil
 }
 
-// Build returns a cached Linux build keyed by the current non-test Go sources
-// and the requested target architecture.
+// Build returns a cached Linux build keyed by the current non-test Go sources,
+// required embedded assets, and the requested target architecture.
 func (b *GoBuilder) Build(ctx context.Context, repoDir, goarch string) (BuildResult, error) {
 	digest, err := sourceDigest(repoDir)
 	if err != nil {
@@ -123,7 +128,24 @@ func sourceDigest(repoDir string) (string, error) {
 }
 
 func sourceFiles(repoDir string) ([]string, error) {
-	var files []string
+	files := make([]string, 0, len(sourceDigestExtraFiles))
+	seen := make(map[string]struct{}, len(sourceDigestExtraFiles))
+	addFile := func(path string) error {
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return fmt.Errorf("%q is a directory", path)
+		}
+		if _, ok := seen[path]; ok {
+			return nil
+		}
+		seen[path] = struct{}{}
+		files = append(files, path)
+		return nil
+	}
+
 	err := filepath.WalkDir(repoDir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -140,14 +162,19 @@ func sourceFiles(repoDir string) ([]string, error) {
 		name := entry.Name()
 		switch {
 		case name == "go.mod", name == "go.sum":
-			files = append(files, path)
+			return addFile(path)
 		case strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go"):
-			files = append(files, path)
+			return addFile(path)
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("walk source tree: %w", err)
+	}
+	for _, rel := range sourceDigestExtraFiles {
+		if err := addFile(filepath.Join(repoDir, rel)); err != nil {
+			return nil, fmt.Errorf("collect digest input %q: %w", rel, err)
+		}
 	}
 
 	slices.Sort(files)

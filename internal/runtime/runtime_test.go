@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"frridge/internal/config"
 	"frridge/internal/docker"
@@ -31,10 +34,11 @@ func TestShortNamesFitLinuxInterfaceLimit(t *testing.T) {
 type fakeDockerClient struct {
 	daemons []string
 	execs   [][]string
+	execFn  func(context.Context, string, []string) (docker.ExecResult, error)
 }
 
-func boolPtr(value bool) *bool {
-	return &value
+type fakeNetworkManager struct {
+	ops [][]string
 }
 
 func (f *fakeDockerClient) CreateContainer(context.Context, docker.ContainerSpec) (string, error) {
@@ -57,7 +61,10 @@ func (f *fakeDockerClient) RemoveContainer(context.Context, string) error {
 	return nil
 }
 
-func (f *fakeDockerClient) Exec(_ context.Context, _ string, cmd []string) (docker.ExecResult, error) {
+func (f *fakeDockerClient) Exec(ctx context.Context, containerID string, cmd []string) (docker.ExecResult, error) {
+	if f.execFn != nil {
+		return f.execFn(ctx, containerID, cmd)
+	}
 	if len(cmd) == 3 && cmd[0] == "vtysh" && cmd[1] == "-c" && cmd[2] == "show daemons" {
 		return docker.ExecResult{ExitCode: 0, Stdout: strings.Join(f.daemons, " ")}, nil
 	}
@@ -66,6 +73,121 @@ func (f *fakeDockerClient) Exec(_ context.Context, _ string, cmd []string) (dock
 }
 
 func (f *fakeDockerClient) ExecInteractive(context.Context, string, []string) error {
+	return nil
+}
+
+func (f *fakeNetworkManager) record(op ...string) {
+	f.ops = append(f.ops, append([]string(nil), op...))
+}
+
+func (f *fakeNetworkManager) EnsureBridge(name string, mtu int) error {
+	f.record("ensure-bridge", name, strconv.Itoa(mtu))
+	return nil
+}
+
+func (f *fakeNetworkManager) CreateBridgeAttachment(bridgeName, hostIfName, peerIfName string, peerPID, mtu int) error {
+	f.record("create-bridge-attachment", bridgeName, hostIfName, peerIfName, strconv.Itoa(peerPID), strconv.Itoa(mtu))
+	return nil
+}
+
+func (f *fakeNetworkManager) CreateP2PAttachment(aIfName string, aPID int, bIfName string, bPID int, mtu int) error {
+	f.record("create-p2p-attachment", aIfName, strconv.Itoa(aPID), bIfName, strconv.Itoa(bPID), strconv.Itoa(mtu))
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureAttachedLink(pid int, tempIfName string, member config.LinkMember, mtu int) error {
+	f.record("configure-attached-link", strconv.Itoa(pid), tempIfName, member.IfName, member.IPv4, member.MAC, strconv.Itoa(mtu))
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureLoopback(pid int, addresses []string) error {
+	f.record(append([]string{"configure-loopback", strconv.Itoa(pid)}, addresses...)...)
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureVRF(pid int, vrf config.VRF) error {
+	f.record("configure-vrf", strconv.Itoa(pid), vrf.Name, strconv.Itoa(vrf.Table))
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureBond(pid int, bond config.Bond) error {
+	f.record(
+		"configure-bond",
+		strconv.Itoa(pid),
+		bond.Name,
+		bond.Mode,
+		bond.Master,
+		strings.Join(bond.Interfaces, ","),
+		bond.MAC,
+		bond.AddrGenMode,
+		strings.Join(bond.Addresses, ","),
+	)
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureBridge(pid int, bridge config.Bridge) error {
+	f.record(
+		"configure-bridge",
+		strconv.Itoa(pid),
+		bridge.Name,
+		bridge.Master,
+		bridge.MAC,
+		bridge.AddrGenMode,
+		strings.Join(bridge.Interfaces, ","),
+		summarizeVXLANS(bridge.VXLANS),
+	)
+	return nil
+}
+
+func (f *fakeNetworkManager) AttachLinkMaster(pid int, ifName, master string) error {
+	f.record("attach-link-master", strconv.Itoa(pid), ifName, master)
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureInterface(pid int, iface config.Interface) error {
+	f.record(
+		"configure-interface",
+		strconv.Itoa(pid),
+		iface.Name,
+		iface.Master,
+		iface.MAC,
+		iface.AddrGenMode,
+		strings.Join(iface.Addresses, ","),
+	)
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureVeth(pid int, veth config.Veth) error {
+	hasNamespace := "false"
+	if veth.Namespace != nil {
+		hasNamespace = "true"
+	}
+	f.record(
+		"configure-veth",
+		strconv.Itoa(pid),
+		veth.Name,
+		veth.Peer,
+		veth.Master,
+		veth.MAC,
+		veth.AddrGenMode,
+		strings.Join(veth.Addresses, ","),
+		hasNamespace,
+	)
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureBridgeNamespaceVeth(pid int, bridgeName, hostVeth, peerVeth string) error {
+	f.record("configure-bridge-namespace-veth", strconv.Itoa(pid), bridgeName, hostVeth, peerVeth)
+	return nil
+}
+
+func (f *fakeNetworkManager) ConfigureRoute(pid int, route config.Route) error {
+	f.record("configure-route", strconv.Itoa(pid), route.To, route.Via, route.Dev)
+	return nil
+}
+
+func (f *fakeNetworkManager) DeleteLink(name string) error {
+	f.record("delete-link", name)
 	return nil
 }
 
@@ -142,79 +264,78 @@ func TestPingCommandSupportsOptionalNamespace(t *testing.T) {
 	}
 }
 
-func TestRouteCommandIncludesViaAndDevice(t *testing.T) {
+func TestConfigureLinksUsesNetworkManagerForMainNamespace(t *testing.T) {
 	t.Parallel()
 
-	command := routeCommand(config.Route{
-		To:  "10.255.0.2/32",
-		Via: "192.0.2.1",
-		Dev: "eth1",
-	})
-	if got, want := strings.Join(command, "\x00"), strings.Join([]string{"ip", "route", "replace", "10.255.0.2/32", "via", "192.0.2.1", "dev", "eth1"}, "\x00"); got != want {
-		t.Fatalf("routeCommand() = %#v, want %#v", command, []string{"ip", "route", "replace", "10.255.0.2/32", "via", "192.0.2.1", "dev", "eth1"})
-	}
-}
-
-func TestBondCommandCreatesNamedBondWithMode(t *testing.T) {
-	t.Parallel()
-
-	command := bondCommand(config.Bond{
-		Name: "bond0",
-		Mode: "active-backup",
-	})
-	if got, want := strings.Join(command, "\x00"), strings.Join([]string{"ip", "link", "add", "name", "bond0", "type", "bond", "mode", "active-backup"}, "\x00"); got != want {
-		t.Fatalf("bondCommand() = %#v, want %#v", command, []string{"ip", "link", "add", "name", "bond0", "type", "bond", "mode", "active-backup"})
-	}
-}
-
-func TestAttachLinuxBondMasterBuildsMasterCommand(t *testing.T) {
-	t.Parallel()
-
-	fakeDocker := &fakeDockerClient{}
-	manager := &Manager{docker: fakeDocker}
-
-	if err := manager.attachLinuxBondMaster(context.Background(), "container-1", config.Bond{
-		Name:   "bond0",
-		Master: "br10",
-	}); err != nil {
-		t.Fatalf("attachLinuxBondMaster() error = %v", err)
-	}
-
-	if got, want := len(fakeDocker.execs), 1; got != want {
-		t.Fatalf("len(execs) = %d, want %d", got, want)
-	}
-	if got, want := strings.Join(fakeDocker.execs[0], "\x00"), strings.Join([]string{"ip", "link", "set", "dev", "bond0", "master", "br10"}, "\x00"); got != want {
-		t.Fatalf("exec = %#v, want %#v", fakeDocker.execs[0], []string{"ip", "link", "set", "dev", "bond0", "master", "br10"})
-	}
-}
-
-func TestVXLANCommandUsesEVPNFriendlyDefaults(t *testing.T) {
-	t.Parallel()
-
-	command := vxlanCommand(config.VXLAN{
-		Name:       "vxlan100",
-		VNI:        100,
-		Local:      "10.255.0.11",
-		NoLearning: true,
-	})
-	if got, want := strings.Join(command, "\x00"), strings.Join([]string{"ip", "link", "add", "name", "vxlan100", "type", "vxlan", "id", "100", "local", "10.255.0.11", "dstport", "4789", "nolearning"}, "\x00"); got != want {
-		t.Fatalf("vxlanCommand() = %#v, want %#v", command, []string{"ip", "link", "add", "name", "vxlan100", "type", "vxlan", "id", "100", "local", "10.255.0.11", "dstport", "4789", "nolearning"})
-	}
-}
-
-func TestBridgeSlaveCommandBuildsOnlyRequestedOptions(t *testing.T) {
-	t.Parallel()
-
-	command := bridgeSlaveCommand(config.VXLAN{
-		Name: "vxlan5000",
-		BridgeSlave: config.BridgeSlaveOptions{
-			NeighSuppress: boolPtr(true),
-			Learning:      boolPtr(false),
+	fakeNetwork := &fakeNetworkManager{}
+	manager := &Manager{network: fakeNetwork}
+	topology := &config.Topology{
+		Lab: config.Lab{Name: "fabric"},
+		Links: []config.Link{
+			{
+				Name: "lan-a",
+				Type: "bridge",
+				MTU:  9100,
+				Members: []config.LinkMember{
+					{Router: "r1", IfName: "eth1", IPv4: "192.0.2.1/24", MAC: "02:00:00:00:00:11"},
+					{Router: "r2", IfName: "eth1", IPv4: "192.0.2.2/24", MAC: "02:00:00:00:00:12"},
+				},
+			},
+			{
+				Name: "core",
+				Type: "p2p",
+				MTU:  1500,
+				Members: []config.LinkMember{
+					{Router: "r1", IfName: "eth2", IPv4: "198.51.100.0/31"},
+					{Router: "r2", IfName: "eth2", IPv4: "198.51.100.1/31"},
+				},
+			},
 		},
-	})
-	if got, want := strings.Join(command, "\x00"), strings.Join([]string{"ip", "link", "set", "dev", "vxlan5000", "type", "bridge_slave", "neigh_suppress", "on", "learning", "off"}, "\x00"); got != want {
-		t.Fatalf("bridgeSlaveCommand() = %#v, want %#v", command, []string{"ip", "link", "set", "dev", "vxlan5000", "type", "bridge_slave", "neigh_suppress", "on", "learning", "off"})
 	}
+	snapshot := &state.LabState{
+		Containers: map[string]state.ContainerState{
+			"r1": {PID: 101},
+			"r2": {PID: 102},
+		},
+	}
+
+	if err := manager.configureLinks(topology, snapshot); err != nil {
+		t.Fatalf("configureLinks() error = %v", err)
+	}
+
+	assertSequenceEqual(t, fakeNetwork.ops, [][]string{
+		{"ensure-bridge", bridgeLinkName("fabric", "lan-a"), "9100"},
+		{"create-bridge-attachment", bridgeLinkName("fabric", "lan-a"), bridgePortName("fabric", "lan-a", "r1", "eth1"), bridgePeerName("fabric", "lan-a", "r1", "eth1"), "101", "9100"},
+		{"configure-attached-link", "101", bridgePeerName("fabric", "lan-a", "r1", "eth1"), "eth1", "192.0.2.1/24", "02:00:00:00:00:11", "9100"},
+		{"create-bridge-attachment", bridgeLinkName("fabric", "lan-a"), bridgePortName("fabric", "lan-a", "r2", "eth1"), bridgePeerName("fabric", "lan-a", "r2", "eth1"), "102", "9100"},
+		{"configure-attached-link", "102", bridgePeerName("fabric", "lan-a", "r2", "eth1"), "eth1", "192.0.2.2/24", "02:00:00:00:00:12", "9100"},
+		{"create-p2p-attachment", p2pTempName("fabric", "core", "a"), "101", p2pTempName("fabric", "core", "b"), "102", "1500"},
+		{"configure-attached-link", "101", p2pTempName("fabric", "core", "a"), "eth2", "198.51.100.0/31", "", "1500"},
+		{"configure-attached-link", "102", p2pTempName("fabric", "core", "b"), "eth2", "198.51.100.1/31", "", "1500"},
+	}, "network ops")
+}
+
+func TestConfigureLoopbacksUsesNetworkManager(t *testing.T) {
+	t.Parallel()
+
+	fakeNetwork := &fakeNetworkManager{}
+	manager := &Manager{network: fakeNetwork}
+	routers := map[string]config.ResolvedRouter{
+		"r1": {Loopbacks: []string{"10.255.0.1/32", "2001:db8::1/128"}},
+	}
+	snapshot := &state.LabState{
+		Containers: map[string]state.ContainerState{
+			"r1": {PID: 101},
+		},
+	}
+
+	if err := manager.configureLoopbacks(routers, snapshot); err != nil {
+		t.Fatalf("configureLoopbacks() error = %v", err)
+	}
+
+	assertSequenceEqual(t, fakeNetwork.ops, [][]string{
+		{"configure-loopback", "101", "10.255.0.1/32", "2001:db8::1/128"},
+	}, "network ops")
 }
 
 func TestHasDaemonsRequiresEveryExpectedDaemon(t *testing.T) {
@@ -228,11 +349,43 @@ func TestHasDaemonsRequiresEveryExpectedDaemon(t *testing.T) {
 	}
 }
 
-func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
+func TestWaitForVTYSHReturnsPromptlyOnContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	manager := &Manager{
+		docker: &fakeDockerClient{
+			execFn: func(ctx context.Context, _ string, _ []string) (docker.ExecResult, error) {
+				return docker.ExecResult{}, ctx.Err()
+			},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- manager.waitForVTYSH(ctx, "container-1", []string{"zebra"})
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waitForVTYSH() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitForVTYSH() did not return promptly after context cancellation")
+	}
+}
+
+func TestConfigureLinuxUsesNetworkManagerForMainNamespaceAndDockerExecForNamedNamespaces(t *testing.T) {
 	t.Parallel()
 
 	fakeDocker := &fakeDockerClient{}
-	manager := &Manager{docker: fakeDocker}
+	fakeNetwork := &fakeNetworkManager{}
+	manager := &Manager{docker: fakeDocker, network: fakeNetwork}
+	neighSuppress := true
+	learning := false
+
 	routers := map[string]config.ResolvedRouter{
 		"r1": {
 			Linux: config.Linux{
@@ -245,7 +398,7 @@ func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 						Master:      "tenant",
 						MAC:         "02:00:00:00:50:11",
 						AddrGenMode: "none",
-						Interfaces:  []string{"bond0"},
+						Interfaces:  []string{"eth4"},
 						VXLANS: []config.VXLAN{
 							{
 								Name:        "vxlan5000",
@@ -254,9 +407,18 @@ func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 								NoLearning:  true,
 								AddrGenMode: "none",
 								BridgeSlave: config.BridgeSlaveOptions{
-									NeighSuppress: boolPtr(true),
-									Learning:      boolPtr(false),
+									NeighSuppress: &neighSuppress,
+									Learning:      &learning,
 								},
+							},
+						},
+						Namespaces: []config.Namespace{
+							{
+								Name:       "ns5000",
+								IfName:     "eth0",
+								MAC:        "02:00:00:00:50:21",
+								Addresses:  []string{"10.50.0.21/24"},
+								DefaultVia: "10.50.0.1",
 							},
 						},
 					},
@@ -265,6 +427,7 @@ func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 					{
 						Name:       "bond0",
 						Mode:       "active-backup",
+						Master:     "tenant",
 						Interfaces: []string{"eth2"},
 					},
 				},
@@ -302,7 +465,7 @@ func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 	}
 	snapshot := &state.LabState{
 		Containers: map[string]state.ContainerState{
-			"r1": {ID: "container-1"},
+			"r1": {ID: "container-1", PID: 101},
 		},
 	}
 
@@ -310,33 +473,26 @@ func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 		t.Fatalf("configureLinux() error = %v", err)
 	}
 
-	want := [][]string{
-		{"ip", "link", "add", "name", "tenant", "type", "vrf", "table", "1100"},
-		{"ip", "link", "set", "dev", "tenant", "up"},
-		{"ip", "link", "add", "name", "bond0", "type", "bond", "mode", "active-backup"},
-		{"ip", "link", "set", "dev", "eth2", "down"},
-		{"ip", "link", "set", "dev", "eth2", "master", "bond0"},
-		{"ip", "link", "set", "dev", "eth2", "up"},
-		{"ip", "link", "set", "dev", "bond0", "up"},
-		{"ip", "link", "add", "name", "br5000", "type", "bridge"},
-		{"ip", "link", "set", "dev", "br5000", "master", "tenant"},
-		{"ip", "link", "set", "dev", "br5000", "addrgenmode", "none"},
-		{"ip", "link", "set", "dev", "br5000", "address", "02:00:00:00:50:11"},
-		{"ip", "link", "set", "dev", "br5000", "up"},
-		{"ip", "link", "set", "dev", "bond0", "master", "br5000"},
-		{"ip", "link", "set", "dev", "bond0", "up"},
-		{"ip", "link", "add", "name", "vxlan5000", "type", "vxlan", "id", "5000", "local", "10.255.0.11", "dstport", "4789", "nolearning"},
-		{"ip", "link", "set", "dev", "vxlan5000", "master", "br5000"},
-		{"ip", "link", "set", "dev", "vxlan5000", "addrgenmode", "none"},
-		{"ip", "link", "set", "dev", "vxlan5000", "type", "bridge_slave", "neigh_suppress", "on", "learning", "off"},
-		{"ip", "link", "set", "dev", "vxlan5000", "up"},
-		{"ip", "link", "set", "dev", "eth3", "master", "tenant"},
-		{"ip", "addr", "replace", "10.20.30.1/24", "dev", "eth3"},
-		{"ip", "link", "set", "dev", "eth3", "up"},
-		{"ip", "link", "add", "name", "lan0", "type", "veth", "peer", "name", "host0"},
-		{"ip", "link", "set", "dev", "lan0", "master", "tenant"},
-		{"ip", "addr", "replace", "10.10.20.1/24", "dev", "lan0"},
-		{"ip", "link", "set", "dev", "lan0", "up"},
+	assertSequenceEqual(t, fakeNetwork.ops, [][]string{
+		{"configure-vrf", "101", "tenant", "1100"},
+		{"configure-bond", "101", "bond0", "active-backup", "tenant", "eth2", "", "", ""},
+		{"configure-bridge", "101", "br5000", "tenant", "02:00:00:00:50:11", "none", "eth4", "vxlan5000|5000|10.255.0.11|0|true|none|true|false"},
+		{"configure-bridge-namespace-veth", "101", "br5000", bridgeNamespaceHostVethName("br5000", "ns5000"), bridgeNamespacePeerVethName("br5000", "ns5000")},
+		{"attach-link-master", "101", "bond0", "tenant"},
+		{"configure-interface", "101", "eth3", "tenant", "", "", "10.20.30.1/24"},
+		{"configure-veth", "101", "lan0", "host0", "tenant", "", "", "10.10.20.1/24", "true"},
+		{"configure-route", "101", "10.255.0.2/32", "192.0.2.1", "eth1"},
+	}, "network ops")
+
+	assertSequenceEqual(t, fakeDocker.execs, [][]string{
+		{"ip", "netns", "add", "ns5000"},
+		{"ip", "link", "set", "dev", bridgeNamespacePeerVethName("br5000", "ns5000"), "netns", "ns5000"},
+		{"ip", "netns", "exec", "ns5000", "ip", "link", "set", "dev", "lo", "up"},
+		{"ip", "netns", "exec", "ns5000", "ip", "link", "set", "dev", bridgeNamespacePeerVethName("br5000", "ns5000"), "name", "eth0"},
+		{"ip", "netns", "exec", "ns5000", "ip", "link", "set", "dev", "eth0", "address", "02:00:00:00:50:21"},
+		{"ip", "netns", "exec", "ns5000", "ip", "addr", "replace", "10.50.0.21/24", "dev", "eth0"},
+		{"ip", "netns", "exec", "ns5000", "ip", "link", "set", "dev", "eth0", "up"},
+		{"ip", "netns", "exec", "ns5000", "ip", "route", "replace", "default", "via", "10.50.0.1"},
 		{"ip", "netns", "add", "host"},
 		{"ip", "link", "set", "dev", "host0", "netns", "host"},
 		{"ip", "netns", "exec", "host", "ip", "link", "set", "dev", "lo", "up"},
@@ -345,17 +501,7 @@ func TestConfigureLinuxVRFsBondsInterfacesVethsBridgesAndRoutes(t *testing.T) {
 		{"ip", "netns", "exec", "host", "ip", "addr", "replace", "10.10.20.11/24", "dev", "eth0"},
 		{"ip", "netns", "exec", "host", "ip", "link", "set", "dev", "eth0", "up"},
 		{"ip", "netns", "exec", "host", "ip", "route", "replace", "default", "via", "10.10.20.1"},
-		{"ip", "route", "replace", "10.255.0.2/32", "via", "192.0.2.1", "dev", "eth1"},
-	}
-
-	if len(fakeDocker.execs) != len(want) {
-		t.Fatalf("len(execs) = %d, want %d\nexecs=%#v", len(fakeDocker.execs), len(want), fakeDocker.execs)
-	}
-	for i := range want {
-		if got, wantJoined := strings.Join(fakeDocker.execs[i], "\x00"), strings.Join(want[i], "\x00"); got != wantJoined {
-			t.Fatalf("exec[%d] = %#v, want %#v", i, fakeDocker.execs[i], want[i])
-		}
-	}
+	}, "docker execs")
 }
 
 func TestRunRouterCommandsRespectsConfiguredOrder(t *testing.T) {
@@ -390,17 +536,46 @@ func TestRunRouterCommandsRespectsConfiguredOrder(t *testing.T) {
 		t.Fatalf("runRouterCommands() error = %v", err)
 	}
 
-	want := [][]string{
+	assertSequenceEqual(t, fakeDocker.execs, [][]string{
 		{"sh", "-lc", "echo before"},
 		{"sh", "-lc", renderVTYSH("configure terminal\nhostname r1")},
 		{"sh", "-lc", "echo after"},
+	}, "docker execs")
+}
+
+func summarizeVXLANS(vxlans []config.VXLAN) string {
+	parts := make([]string, 0, len(vxlans))
+	for _, vxlan := range vxlans {
+		parts = append(parts, strings.Join([]string{
+			vxlan.Name,
+			strconv.Itoa(vxlan.VNI),
+			vxlan.Local,
+			strconv.Itoa(vxlan.DstPort),
+			strconv.FormatBool(vxlan.NoLearning),
+			vxlan.AddrGenMode,
+			boolValue(vxlan.BridgeSlave.NeighSuppress),
+			boolValue(vxlan.BridgeSlave.Learning),
+		}, "|"))
 	}
-	if len(fakeDocker.execs) != len(want) {
-		t.Fatalf("len(execs) = %d, want %d\nexecs=%#v", len(fakeDocker.execs), len(want), fakeDocker.execs)
+	return strings.Join(parts, ",")
+}
+
+func boolValue(value *bool) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.FormatBool(*value)
+}
+
+func assertSequenceEqual(t *testing.T, got, want [][]string, label string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("%s len = %d, want %d\ngot=%#v", label, len(got), len(want), got)
 	}
 	for i := range want {
-		if got, wantJoined := strings.Join(fakeDocker.execs[i], "\x00"), strings.Join(want[i], "\x00"); got != wantJoined {
-			t.Fatalf("exec[%d] = %#v, want %#v", i, fakeDocker.execs[i], want[i])
+		if strings.Join(got[i], "\x00") != strings.Join(want[i], "\x00") {
+			t.Fatalf("%s[%d] = %#v, want %#v", label, i, got[i], want[i])
 		}
 	}
 }

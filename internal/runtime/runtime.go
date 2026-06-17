@@ -184,10 +184,10 @@ func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (
 		}
 	}
 
-	if err := m.configureLinks(ctx, topology, snapshot); err != nil {
+	if err := m.configureLinks(topology, snapshot); err != nil {
 		return err
 	}
-	if err := m.configureLoopbacks(ctx, resolvedRouters, snapshot); err != nil {
+	if err := m.configureLoopbacks(resolvedRouters, snapshot); err != nil {
 		return err
 	}
 	if err := m.configureLinux(ctx, resolvedRouters, snapshot); err != nil {
@@ -287,7 +287,7 @@ func (m *Manager) runtimeExists(ctx context.Context, topology *config.Topology) 
 	return len(containers) > 0, nil
 }
 
-func (m *Manager) configureLinks(ctx context.Context, topology *config.Topology, snapshot *state.LabState) error {
+func (m *Manager) configureLinks(topology *config.Topology, snapshot *state.LabState) error {
 	for _, link := range topology.Links {
 		switch link.Type {
 		case "bridge":
@@ -302,7 +302,7 @@ func (m *Manager) configureLinks(ctx context.Context, topology *config.Topology,
 				if err := m.network.CreateBridgeAttachment(bridgeName, hostIfName, peerIfName, container.PID, link.MTU); err != nil {
 					return err
 				}
-				if err := m.configureInterface(ctx, container.ID, peerIfName, member, link.MTU); err != nil {
+				if err := m.network.ConfigureAttachedLink(container.PID, peerIfName, member, link.MTU); err != nil {
 					return err
 				}
 			}
@@ -321,10 +321,10 @@ func (m *Manager) configureLinks(ctx context.Context, topology *config.Topology,
 			); err != nil {
 				return err
 			}
-			if err := m.configureInterface(ctx, snapshot.Containers[left.Router].ID, leftTemp, left, link.MTU); err != nil {
+			if err := m.network.ConfigureAttachedLink(snapshot.Containers[left.Router].PID, leftTemp, left, link.MTU); err != nil {
 				return err
 			}
-			if err := m.configureInterface(ctx, snapshot.Containers[right.Router].ID, rightTemp, right, link.MTU); err != nil {
+			if err := m.network.ConfigureAttachedLink(snapshot.Containers[right.Router].PID, rightTemp, right, link.MTU); err != nil {
 				return err
 			}
 		}
@@ -333,16 +333,11 @@ func (m *Manager) configureLinks(ctx context.Context, topology *config.Topology,
 	return nil
 }
 
-func (m *Manager) configureLoopbacks(ctx context.Context, routers map[string]config.ResolvedRouter, snapshot *state.LabState) error {
+func (m *Manager) configureLoopbacks(routers map[string]config.ResolvedRouter, snapshot *state.LabState) error {
 	for _, routerName := range sortedResolvedRouterNames(routers) {
 		container := snapshot.Containers[routerName]
-		if err := m.runExec(ctx, container.ID, []string{"ip", "link", "set", "lo", "up"}, "bring loopback up"); err != nil {
+		if err := m.network.ConfigureLoopback(container.PID, routers[routerName].Loopbacks); err != nil {
 			return fmt.Errorf("router %q: %w", routerName, err)
-		}
-		for _, loopback := range routers[routerName].Loopbacks {
-			if err := m.runExec(ctx, container.ID, []string{"ip", "addr", "replace", loopback, "dev", "lo"}, "configure loopback"); err != nil {
-				return fmt.Errorf("router %q: %w", routerName, err)
-			}
 		}
 	}
 	return nil
@@ -352,169 +347,61 @@ func (m *Manager) configureLinux(ctx context.Context, routers map[string]config.
 	for _, routerName := range sortedResolvedRouterNames(routers) {
 		container := snapshot.Containers[routerName]
 		for _, vrf := range routers[routerName].Linux.VRFs {
-			if err := m.configureLinuxVRF(ctx, container.ID, vrf); err != nil {
+			if err := m.network.ConfigureVRF(container.PID, vrf); err != nil {
 				return fmt.Errorf("router %q vrf %q: %w", routerName, vrf.Name, err)
 			}
 		}
 		for _, bond := range routers[routerName].Linux.Bonds {
-			if err := m.configureLinuxBond(ctx, container.ID, bond); err != nil {
+			if err := m.network.ConfigureBond(container.PID, bond); err != nil {
 				return fmt.Errorf("router %q bond %q: %w", routerName, bond.Name, err)
 			}
 		}
 		for _, bridge := range routers[routerName].Linux.Bridges {
-			if err := m.configureLinuxBridge(ctx, container.ID, bridge); err != nil {
+			if err := m.network.ConfigureBridge(container.PID, bridge); err != nil {
 				return fmt.Errorf("router %q bridge %q: %w", routerName, bridge.Name, err)
+			}
+			for _, namespace := range bridge.Namespaces {
+				if err := m.configureLinuxNamespace(ctx, container.ID, container.PID, bridge.Name, namespace); err != nil {
+					return fmt.Errorf("router %q bridge %q namespace %q: %w", routerName, bridge.Name, namespace.Name, err)
+				}
 			}
 		}
 		for _, bond := range routers[routerName].Linux.Bonds {
-			if err := m.attachLinuxBondMaster(ctx, container.ID, bond); err != nil {
+			if strings.TrimSpace(bond.Master) == "" {
+				continue
+			}
+			if err := m.network.AttachLinkMaster(container.PID, bond.Name, bond.Master); err != nil {
 				return fmt.Errorf("router %q bond %q: %w", routerName, bond.Name, err)
 			}
 		}
 		for _, iface := range routers[routerName].Linux.Interfaces {
-			if err := m.configureLinuxInterface(ctx, container.ID, iface); err != nil {
+			if err := m.network.ConfigureInterface(container.PID, iface); err != nil {
 				return fmt.Errorf("router %q interface %q: %w", routerName, iface.Name, err)
 			}
 		}
 		for _, veth := range routers[routerName].Linux.Veths {
-			if err := m.configureLinuxVeth(ctx, container.ID, veth); err != nil {
+			if err := m.network.ConfigureVeth(container.PID, veth); err != nil {
 				return fmt.Errorf("router %q veth %q: %w", routerName, veth.Name, err)
+			}
+			if veth.Namespace != nil {
+				if err := m.configureLinuxNamespacePeer(ctx, container.ID, veth.Peer, *veth.Namespace); err != nil {
+					return fmt.Errorf("router %q veth %q namespace %q: %w", routerName, veth.Name, veth.Namespace.Name, err)
+				}
 			}
 		}
 		for _, route := range routers[routerName].Linux.Routes {
-			if err := m.runExec(ctx, container.ID, routeCommand(route), "configure route"); err != nil {
+			if err := m.network.ConfigureRoute(container.PID, route); err != nil {
 				return fmt.Errorf("router %q route %q: %w", routerName, route.To, err)
 			}
 		}
 	}
 	return nil
 }
-
-func (m *Manager) configureLinuxVRF(ctx context.Context, containerID string, vrf config.VRF) error {
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "add", "name", vrf.Name, "type", "vrf", "table", strconv.Itoa(vrf.Table)}, "create vrf"); err != nil {
-		return err
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", vrf.Name, "up"}, "bring vrf up"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (m *Manager) configureLinuxBond(ctx context.Context, containerID string, bond config.Bond) error {
-	if err := m.runExec(ctx, containerID, bondCommand(bond), "create bond"); err != nil {
-		return err
-	}
-	if err := m.configureLinkAttrs(ctx, containerID, bond.Name, "", bond.MAC, bond.AddrGenMode, bond.Addresses); err != nil {
-		return err
-	}
-	for _, iface := range bond.Interfaces {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "down"}, "bring bond slave down"); err != nil {
-			return err
-		}
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "master", bond.Name}, "attach interface to bond"); err != nil {
-			return err
-		}
-	}
-	for _, iface := range bond.Interfaces {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "up"}, "bring bond slave up"); err != nil {
-			return err
-		}
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bond.Name, "up"}, "bring bond up"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (m *Manager) attachLinuxBondMaster(ctx context.Context, containerID string, bond config.Bond) error {
-	if strings.TrimSpace(bond.Master) != "" {
-		return m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bond.Name, "master", bond.Master}, "attach bond to master")
-	}
-	return nil
-}
-
-func (m *Manager) configureLinuxBridge(ctx context.Context, containerID string, bridge config.Bridge) error {
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "add", "name", bridge.Name, "type", "bridge"}, "create bridge"); err != nil {
-		return err
-	}
-	if err := m.configureLinkAttrs(ctx, containerID, bridge.Name, bridge.Master, bridge.MAC, bridge.AddrGenMode, bridge.Addresses); err != nil {
-		return err
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", bridge.Name, "up"}, "bring bridge up"); err != nil {
-		return err
-	}
-	for _, iface := range bridge.Interfaces {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "master", bridge.Name}, "attach interface to bridge"); err != nil {
-			return err
-		}
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface, "up"}, "bring bridged interface up"); err != nil {
-			return err
-		}
-	}
-	for _, vxlan := range bridge.VXLANS {
-		if err := m.runExec(ctx, containerID, vxlanCommand(vxlan), "create vxlan"); err != nil {
-			return err
-		}
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", vxlan.Name, "master", bridge.Name}, "attach vxlan to bridge"); err != nil {
-			return err
-		}
-		if err := m.configureLinkAttrs(ctx, containerID, vxlan.Name, "", "", vxlan.AddrGenMode, nil); err != nil {
-			return err
-		}
-		if command := bridgeSlaveCommand(vxlan); len(command) > 0 {
-			if err := m.runExec(ctx, containerID, command, "configure bridge_slave vxlan"); err != nil {
-				return err
-			}
-		}
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", vxlan.Name, "up"}, "bring vxlan up"); err != nil {
-			return err
-		}
-	}
-	for _, namespace := range bridge.Namespaces {
-		if err := m.configureLinuxNamespace(ctx, containerID, bridge.Name, namespace); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *Manager) configureLinuxInterface(ctx context.Context, containerID string, iface config.Interface) error {
-	if err := m.configureLinkAttrs(ctx, containerID, iface.Name, iface.Master, iface.MAC, iface.AddrGenMode, iface.Addresses); err != nil {
-		return err
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", iface.Name, "up"}, "bring interface up"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (m *Manager) configureLinuxVeth(ctx context.Context, containerID string, veth config.Veth) error {
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "add", "name", veth.Name, "type", "veth", "peer", "name", veth.Peer}, "create veth"); err != nil {
-		return err
-	}
-	if err := m.configureLinkAttrs(ctx, containerID, veth.Name, veth.Master, veth.MAC, veth.AddrGenMode, veth.Addresses); err != nil {
-		return err
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", veth.Name, "up"}, "bring veth up"); err != nil {
-		return err
-	}
-	if veth.Namespace == nil {
-		return nil
-	}
-	return m.configureLinuxNamespacePeer(ctx, containerID, veth.Peer, *veth.Namespace)
-}
-
-func (m *Manager) configureLinuxNamespace(ctx context.Context, containerID, bridgeName string, namespace config.Namespace) error {
+func (m *Manager) configureLinuxNamespace(ctx context.Context, containerID string, pid int, bridgeName string, namespace config.Namespace) error {
 	hostVeth := bridgeNamespaceHostVethName(bridgeName, namespace.Name)
 	peerVeth := bridgeNamespacePeerVethName(bridgeName, namespace.Name)
 
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "add", "name", hostVeth, "type", "veth", "peer", "name", peerVeth}, "create namespace veth"); err != nil {
-		return err
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", hostVeth, "master", bridgeName}, "attach namespace veth to bridge"); err != nil {
-		return err
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", hostVeth, "up"}, "bring namespace bridge veth up"); err != nil {
+	if err := m.network.ConfigureBridgeNamespaceVeth(pid, bridgeName, hostVeth, peerVeth); err != nil {
 		return err
 	}
 	return m.configureLinuxNamespacePeer(ctx, containerID, peerVeth, namespace)
@@ -548,30 +435,6 @@ func (m *Manager) configureLinuxNamespacePeer(ctx context.Context, containerID, 
 	}
 	if namespace.DefaultVia != "" {
 		if err := m.runExec(ctx, containerID, []string{"ip", "netns", "exec", namespace.Name, "ip", "route", "replace", "default", "via", namespace.DefaultVia}, "configure namespace default route"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *Manager) configureLinkAttrs(ctx context.Context, containerID, ifName, master, mac, addrGenMode string, addresses []string) error {
-	if strings.TrimSpace(master) != "" {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", ifName, "master", master}, "attach interface to master"); err != nil {
-			return err
-		}
-	}
-	if strings.TrimSpace(addrGenMode) != "" {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", ifName, "addrgenmode", addrGenMode}, "set interface addrgenmode"); err != nil {
-			return err
-		}
-	}
-	if strings.TrimSpace(mac) != "" {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", ifName, "address", mac}, "set interface mac"); err != nil {
-			return err
-		}
-	}
-	for _, address := range addresses {
-		if err := m.runExec(ctx, containerID, []string{"ip", "addr", "replace", address, "dev", ifName}, "configure interface address"); err != nil {
 			return err
 		}
 	}
@@ -762,55 +625,49 @@ func (m *Manager) lookupRouterContainer(ctx context.Context, topology *config.To
 	return containers[0], nil
 }
 
-func (m *Manager) configureInterface(ctx context.Context, containerID, tempIfName string, member config.LinkMember, mtu int) error {
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", tempIfName, "name", member.IfName}, "rename interface"); err != nil {
-		return err
-	}
-	if mtu > 0 {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", member.IfName, "mtu", strconv.Itoa(mtu)}, "set interface mtu"); err != nil {
-			return err
-		}
-	}
-	if member.MAC != "" {
-		if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", member.IfName, "address", member.MAC}, "set interface mac"); err != nil {
-			return err
-		}
-	}
-	if member.IPv4 != "" {
-		if err := m.runExec(ctx, containerID, []string{"ip", "addr", "replace", member.IPv4, "dev", member.IfName}, "set interface address"); err != nil {
-			return err
-		}
-	}
-	if err := m.runExec(ctx, containerID, []string{"ip", "link", "set", "dev", member.IfName, "up"}, "bring interface up"); err != nil {
-		return err
-	}
-	return nil
-}
-
 // waitForVTYSH waits until vtysh can see every enabled daemon, which makes
 // subsequent seed commands and write-memory calls deterministic.
 func (m *Manager) waitForVTYSH(ctx context.Context, containerID string, daemons []string) error {
-	deadline := time.Now().Add(20 * time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastResult docker.ExecResult
+	var lastErr error
 	for {
-		result, err := m.docker.Exec(ctx, containerID, []string{"vtysh", "-c", "show daemons"})
+		result, err := m.docker.Exec(waitCtx, containerID, []string{"vtysh", "-c", "show daemons"})
 		if err == nil && result.ExitCode == 0 {
 			running := strings.Fields(result.Stdout)
 			if hasDaemons(running, daemons) {
 				return nil
 			}
 		}
-		if time.Now().After(deadline) {
-			if err != nil {
-				return fmt.Errorf("wait for vtysh: %w", err)
+		lastResult = result
+		lastErr = err
+
+		select {
+		case <-waitCtx.Done():
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return formatVTYSHWaitError(lastResult, lastErr)
 			}
-			message := strings.TrimSpace(result.Stderr)
-			if message == "" {
-				message = strings.TrimSpace(result.Stdout)
-			}
-			return fmt.Errorf("wait for vtysh timed out: %s", message)
+			return fmt.Errorf("wait for vtysh: %w", waitCtx.Err())
+		case <-ticker.C:
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+func formatVTYSHWaitError(result docker.ExecResult, err error) error {
+	if err != nil {
+		return fmt.Errorf("wait for vtysh: %w", err)
+	}
+
+	message := strings.TrimSpace(result.Stderr)
+	if message == "" {
+		message = strings.TrimSpace(result.Stdout)
+	}
+	return fmt.Errorf("wait for vtysh timed out: %s", message)
 }
 
 func hasDaemons(running, want []string) bool {
@@ -857,67 +714,6 @@ func selectPingChecks(checks []config.Ping, name string) ([]config.Ping, error) 
 		}
 	}
 	return nil, fmt.Errorf("ping %q not found in topology", name)
-}
-
-func routeCommand(route config.Route) []string {
-	command := []string{"ip", "route", "replace", route.To}
-	if strings.TrimSpace(route.Via) != "" {
-		command = append(command, "via", route.Via)
-	}
-	if strings.TrimSpace(route.Dev) != "" {
-		command = append(command, "dev", route.Dev)
-	}
-	return command
-}
-
-func bondCommand(bond config.Bond) []string {
-	return []string{
-		"ip", "link", "add", "name", bond.Name,
-		"type", "bond",
-		"mode", bond.Mode,
-	}
-}
-
-func vxlanCommand(vxlan config.VXLAN) []string {
-	command := []string{
-		"ip", "link", "add", "name", vxlan.Name,
-		"type", "vxlan",
-		"id", strconv.Itoa(vxlan.VNI),
-	}
-	if strings.TrimSpace(vxlan.Local) != "" {
-		command = append(command, "local", vxlan.Local)
-	}
-	dstPort := vxlan.DstPort
-	if dstPort == 0 {
-		dstPort = 4789
-	}
-	command = append(command, "dstport", strconv.Itoa(dstPort))
-	if vxlan.NoLearning {
-		command = append(command, "nolearning")
-	}
-	return command
-}
-
-func bridgeSlaveCommand(vxlan config.VXLAN) []string {
-	if vxlan.BridgeSlave.NeighSuppress == nil && vxlan.BridgeSlave.Learning == nil {
-		return nil
-	}
-
-	command := []string{"ip", "link", "set", "dev", vxlan.Name, "type", "bridge_slave"}
-	if vxlan.BridgeSlave.NeighSuppress != nil {
-		command = append(command, "neigh_suppress", onOff(*vxlan.BridgeSlave.NeighSuppress))
-	}
-	if vxlan.BridgeSlave.Learning != nil {
-		command = append(command, "learning", onOff(*vxlan.BridgeSlave.Learning))
-	}
-	return command
-}
-
-func onOff(value bool) string {
-	if value {
-		return "on"
-	}
-	return "off"
 }
 
 func pingCommand(check config.Ping) []string {

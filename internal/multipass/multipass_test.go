@@ -431,6 +431,7 @@ func TestMapGuestArch(t *testing.T) {
 func TestBuildShellScriptWrapsDirAndEnv(t *testing.T) {
 	t.Parallel()
 
+	markers := &shellMarkers{output: "output-token", status: "status-token="}
 	script := buildShellScript(ExecSpec{
 		Command: []string{"docker", "ps"},
 		Dir:     "/work",
@@ -438,14 +439,15 @@ func TestBuildShellScriptWrapsDirAndEnv(t *testing.T) {
 			"B": "2",
 			"A": "1",
 		},
-	}, false, false)
+	}, markers)
 
 	for _, want := range []string{
 		"set -euo pipefail\n",
 		"cd '/work'\n",
 		"export A='1'\n",
 		"export B='2'\n",
-		"set +e\n'docker' 'ps'\nstatus=$?\nexit \"$status\"\n",
+		"printf 'output-token\\n'\n",
+		"set +e\n'docker' 'ps'\nstatus=$?\nprintf 'status-token=%s\\n' \"$status\"\nexit 0\n",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("buildShellScript() missing %q in %q", want, script)
@@ -456,8 +458,9 @@ func TestBuildShellScriptWrapsDirAndEnv(t *testing.T) {
 func TestStripOutputBannerReturnsOnlyCommandOutput(t *testing.T) {
 	t.Parallel()
 
-	output := "banner\n" + outputMarker + "\naarch64\n"
-	if got, want := stripOutputBanner(output), "aarch64\n"; got != want {
+	markers := shellMarkers{output: "output-token", status: "status-token="}
+	output := "banner\n" + markers.output + "\naarch64\n"
+	if got, want := stripOutputBanner(output, markers), "aarch64\n"; got != want {
 		t.Fatalf("stripOutputBanner() = %q, want %q", got, want)
 	}
 }
@@ -465,7 +468,8 @@ func TestStripOutputBannerReturnsOnlyCommandOutput(t *testing.T) {
 func TestParseShellOutputReturnsExitStatus(t *testing.T) {
 	t.Parallel()
 
-	output, exitCode, err := parseShellOutput("banner\n" + outputMarker + "\naarch64\n" + statusMarker + "17\n")
+	markers := shellMarkers{output: "output-token", status: "status-token="}
+	output, exitCode, err := parseShellOutput("banner\n"+markers.output+"\naarch64\n"+markers.status+"17\n", markers)
 	if err != nil {
 		t.Fatalf("parseShellOutput() error = %v", err)
 	}
@@ -474,6 +478,23 @@ func TestParseShellOutputReturnsExitStatus(t *testing.T) {
 	}
 	if exitCode != 17 {
 		t.Fatalf("parseShellOutput() exitCode = %d, want 17", exitCode)
+	}
+}
+
+func TestParseShellOutputKeepsCommandOutputThatLooksLikeStatusLine(t *testing.T) {
+	t.Parallel()
+
+	markers := shellMarkers{output: "output-token", status: "status-token="}
+	raw := "banner\n" + markers.output + "\nstatus-token-other=17\n" + markers.status + "0\n"
+	output, exitCode, err := parseShellOutput(raw, markers)
+	if err != nil {
+		t.Fatalf("parseShellOutput() error = %v", err)
+	}
+	if output != "status-token-other=17\n" {
+		t.Fatalf("parseShellOutput() output = %q, want %q", output, "status-token-other=17\n")
+	}
+	if exitCode != 0 {
+		t.Fatalf("parseShellOutput() exitCode = %d, want 0", exitCode)
 	}
 }
 

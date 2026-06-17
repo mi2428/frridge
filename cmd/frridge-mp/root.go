@@ -186,14 +186,19 @@ func resolveTopology(cmd *cobra.Command, req multipass.Request, topologyPath str
 		return req, "", err
 	}
 
-	rel, err := filepath.Rel(hostDir, absFile)
+	resolvedFile, err := resolvedCoveragePath(absFile)
+	if err != nil {
+		return req, "", fmt.Errorf("resolve topology file: %w", err)
+	}
+	if err := ensureBelowHostDir(hostDir, resolvedFile); err != nil {
+		return req, "", fmt.Errorf("topology file %q is outside --host-dir %q", absFile, hostDir)
+	}
+
+	rel, err := filepath.Rel(hostDir, resolvedFile)
 	if err != nil {
 		return req, "", fmt.Errorf("relativize topology file: %w", err)
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return req, "", fmt.Errorf("topology file %q is outside --host-dir %q", absFile, hostDir)
-	}
-	if err := validateHostDirCoverage(absFile, hostDir); err != nil {
+	if err := validateHostDirCoverage(resolvedFile, hostDir); err != nil {
 		return req, "", err
 	}
 
@@ -214,7 +219,11 @@ func effectiveHostDir(hostDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve host dir: %w", err)
 	}
-	return abs, nil
+	resolved, err := resolvedCoveragePath(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve host dir: %w", err)
+	}
+	return resolved, nil
 }
 
 func validateHostDirCoverage(topologyPath, hostDir string) error {
@@ -234,12 +243,36 @@ func validateHostDirCoverage(topologyPath, hostDir string) error {
 }
 
 func ensureBelowHostDir(hostDir, candidate string) error {
-	rel, err := filepath.Rel(hostDir, candidate)
+	resolvedHostDir, err := resolvedCoveragePath(hostDir)
+	if err != nil {
+		return err
+	}
+	resolvedCandidate, err := resolvedCoveragePath(candidate)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(resolvedHostDir, resolvedCandidate)
 	if err != nil {
 		return err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%q is outside %q", candidate, hostDir)
+		return fmt.Errorf("%q is outside %q", resolvedCandidate, resolvedHostDir)
 	}
 	return nil
+}
+
+func resolvedCoveragePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	switch {
+	case err == nil:
+		return resolved, nil
+	case os.IsNotExist(err):
+		return abs, nil
+	default:
+		return "", err
+	}
 }

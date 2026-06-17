@@ -55,7 +55,11 @@ func TestUpCommandRelativizesTopologyAgainstImplicitHostDir(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if got, want := service.frridgeReq.HostDir, filepath.Dir(topologyPath); got != want {
+	wantHostDir, err := resolvedCoveragePath(filepath.Dir(topologyPath))
+	if err != nil {
+		t.Fatalf("resolvedCoveragePath() error = %v", err)
+	}
+	if got, want := service.frridgeReq.HostDir, wantHostDir; got != want {
 		t.Fatalf("HostDir = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(service.frridgeArgs, "\x00"), strings.Join([]string{"--file", "lab.yaml", "up", "--recreate"}, "\x00"); got != want {
@@ -118,6 +122,50 @@ links:
 	cmd.SetArgs([]string{"up", "--file", topologyPath})
 	if err := cmd.Execute(); err == nil {
 		t.Fatalf("Execute() error = nil, want host-dir coverage failure")
+	}
+}
+
+func TestUpCommandRejectsSymlinkMountOutsideHostDir(t *testing.T) {
+	t.Parallel()
+
+	service := &fakeService{}
+	cmd := newRootCommand(service)
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+
+	hostDir := t.TempDir()
+	outsideDir := t.TempDir()
+	symlinkPath := filepath.Join(hostDir, "outside-link")
+	if err := os.Symlink(outsideDir, symlinkPath); err != nil {
+		t.Skipf("Symlink() unsupported: %v", err)
+	}
+
+	topologyPath := filepath.Join(hostDir, "lab.yaml")
+	if err := os.WriteFile(topologyPath, []byte(`
+apiVersion: frridge/v1alpha1
+lab:
+  name: test
+  defaults:
+    image: frr
+routers:
+  r1:
+    mounts:
+      - source: ./outside-link
+        target: /lab
+links:
+  - name: l1
+    type: p2p
+    members:
+      - { router: r1, ifname: eth1 }
+      - { router: r1, ifname: eth2 }
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cmd.SetArgs([]string{"up", "--file", topologyPath})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "outside --host-dir") {
+		t.Fatalf("Execute() error = %v, want symlink host-dir coverage failure", err)
 	}
 }
 

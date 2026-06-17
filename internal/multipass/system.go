@@ -3,6 +3,8 @@ package multipass
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,11 +20,16 @@ import (
 var ErrInstanceNotFound = errors.New("multipass instance not found")
 
 const (
-	outputMarker = "__FRRIDGE_OUTPUT_BEGIN__"
-	statusMarker = "__FRRIDGE_EXIT_STATUS__="
+	outputMarkerPrefix = "__FRRIDGE_OUTPUT_BEGIN__"
+	statusMarkerPrefix = "__FRRIDGE_EXIT_STATUS__="
 )
 
 type systemCLI struct{}
+
+type shellMarkers struct {
+	output string
+	status string
+}
 
 func newSystemCLI() *systemCLI {
 	return &systemCLI{}
@@ -122,7 +129,7 @@ func (c *systemCLI) Exec(ctx context.Context, instance string, spec ExecSpec) er
 	var stderr bytes.Buffer
 
 	cmd := exec.CommandContext(ctx, "multipass", "shell", instance)
-	cmd.Stdin = shellInput(spec, false, false)
+	cmd.Stdin = shellInput(spec, nil)
 	if spec.Stdout != nil {
 		cmd.Stdout = spec.Stdout
 	} else {
@@ -142,16 +149,20 @@ func (c *systemCLI) Exec(ctx context.Context, instance string, spec ExecSpec) er
 func (c *systemCLI) Output(ctx context.Context, instance string, spec ExecSpec) (string, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	markers, err := newShellMarkers()
+	if err != nil {
+		return "", err
+	}
 
 	cmd := exec.CommandContext(ctx, "multipass", "shell", instance)
-	cmd.Stdin = shellInput(spec, true, true)
+	cmd.Stdin = shellInput(spec, &markers)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return "", commandError("multipass shell", err, stderr.String())
 	}
 
-	output, exitCode, err := parseShellOutput(stdout.String())
+	output, exitCode, err := parseShellOutput(stdout.String(), markers)
 	if err != nil {
 		return "", err
 	}
@@ -175,16 +186,20 @@ func (c *systemCLI) output(ctx context.Context, args ...string) (string, string,
 func (c *systemCLI) execBuffered(ctx context.Context, instance string, spec ExecSpec) error {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	markers, err := newShellMarkers()
+	if err != nil {
+		return err
+	}
 
 	cmd := exec.CommandContext(ctx, "multipass", "shell", instance)
-	cmd.Stdin = shellInput(spec, true, true)
+	cmd.Stdin = shellInput(spec, &markers)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return commandError("multipass shell", err, stderr.String())
 	}
 
-	output, exitCode, err := parseShellOutput(stdout.String())
+	output, exitCode, err := parseShellOutput(stdout.String(), markers)
 	if err != nil {
 		return err
 	}
@@ -205,15 +220,27 @@ func (c *systemCLI) execBuffered(ctx context.Context, instance string, spec Exec
 	return nil
 }
 
-func shellInput(spec ExecSpec, markOutput, markStatus bool) io.Reader {
-	script := buildShellScript(spec, markOutput, markStatus)
+func newShellMarkers() (shellMarkers, error) {
+	var token [8]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return shellMarkers{}, fmt.Errorf("generate shell markers: %w", err)
+	}
+	suffix := hex.EncodeToString(token[:])
+	return shellMarkers{
+		output: outputMarkerPrefix + suffix,
+		status: statusMarkerPrefix + suffix + "=",
+	}, nil
+}
+
+func shellInput(spec ExecSpec, markers *shellMarkers) io.Reader {
+	script := buildShellScript(spec, markers)
 	if spec.Stdin == nil {
 		return strings.NewReader(script)
 	}
 	return io.MultiReader(strings.NewReader(script), spec.Stdin)
 }
 
-func buildShellScript(spec ExecSpec, markOutput, markStatus bool) string {
+func buildShellScript(spec ExecSpec, markers *shellMarkers) string {
 	var builder strings.Builder
 	builder.WriteString("set -euo pipefail\n")
 	if strings.TrimSpace(spec.Dir) != "" {
@@ -228,17 +255,17 @@ func buildShellScript(spec ExecSpec, markOutput, markStatus bool) string {
 		builder.WriteString(shellQuote(spec.Env[key]))
 		builder.WriteByte('\n')
 	}
-	if markOutput {
+	if markers != nil {
 		builder.WriteString("printf ")
-		builder.WriteString(shellQuote(outputMarker + "\\n"))
+		builder.WriteString(shellQuote(markers.output + "\\n"))
 		builder.WriteByte('\n')
 	}
 	builder.WriteString("set +e\n")
 	builder.WriteString(shellJoin(spec.Command))
 	builder.WriteString("\nstatus=$?\n")
-	if markStatus {
+	if markers != nil {
 		builder.WriteString("printf ")
-		builder.WriteString(shellQuote(statusMarker + "%s\\n"))
+		builder.WriteString(shellQuote(markers.status + "%s\\n"))
 		builder.WriteString(" \"$status\"\n")
 		builder.WriteString("exit 0\n")
 		return builder.String()
@@ -273,23 +300,23 @@ func shellJoin(args []string) string {
 	return strings.Join(quoted, " ")
 }
 
-func stripOutputBanner(output string) string {
-	_, rest, ok := strings.Cut(output, outputMarker+"\n")
+func stripOutputBanner(output string, markers shellMarkers) string {
+	_, rest, ok := strings.Cut(output, markers.output+"\n")
 	if ok {
 		return rest
 	}
 	return output
 }
 
-func parseShellOutput(output string) (string, int, error) {
-	output = stripOutputBanner(output)
-	index := strings.LastIndex(output, statusMarker)
+func parseShellOutput(output string, markers shellMarkers) (string, int, error) {
+	output = stripOutputBanner(output, markers)
+	index := strings.LastIndex(output, markers.status)
 	if index == -1 {
 		return output, 0, nil
 	}
 
 	content := output[:index]
-	statusText := output[index+len(statusMarker):]
+	statusText := output[index+len(markers.status):]
 	statusText = strings.TrimSpace(statusText)
 	exitCode, err := strconv.Atoi(statusText)
 	if err != nil {
