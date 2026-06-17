@@ -1,0 +1,345 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-esi-multihoming-ipv6-clos
+  workdir: .frridge
+  defaults:
+    sysctls:
+      net.ipv6.conf.all.forwarding: "1"
+
+routers:
+  sp1:
+    loopbacks:
+      - 2001:db8:181::1/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:181:1::1/127 dev eth1
+          ip -6 addr replace 2001:db8:181:2::1/127 dev eth2
+          ip -6 addr replace 2001:db8:181:3::1/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp1
+          router bgp 65000
+           bgp router-id 10.255.181.1
+           bgp cluster-id 10.255.181.1
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:181:1::0 remote-as 65000
+           neighbor 2001:db8:181:2::0 remote-as 65000
+           neighbor 2001:db8:181:3::0 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:181::1/128
+            neighbor 2001:db8:181:1::0 activate
+            neighbor 2001:db8:181:1::0 route-reflector-client
+            neighbor 2001:db8:181:1::0 next-hop-self force
+            neighbor 2001:db8:181:2::0 activate
+            neighbor 2001:db8:181:2::0 route-reflector-client
+            neighbor 2001:db8:181:2::0 next-hop-self force
+            neighbor 2001:db8:181:3::0 activate
+            neighbor 2001:db8:181:3::0 route-reflector-client
+            neighbor 2001:db8:181:3::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:181:1::0 activate
+            neighbor 2001:db8:181:1::0 route-reflector-client
+            neighbor 2001:db8:181:2::0 activate
+            neighbor 2001:db8:181:2::0 route-reflector-client
+            neighbor 2001:db8:181:3::0 activate
+            neighbor 2001:db8:181:3::0 route-reflector-client
+           exit-address-family
+          end
+
+  sp2:
+    loopbacks:
+      - 2001:db8:181::2/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:181:4::1/127 dev eth1
+          ip -6 addr replace 2001:db8:181:5::1/127 dev eth2
+          ip -6 addr replace 2001:db8:181:6::1/127 dev eth3
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp2
+          router bgp 65000
+           bgp router-id 10.255.181.2
+           bgp cluster-id 10.255.181.2
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:181:4::0 remote-as 65000
+           neighbor 2001:db8:181:5::0 remote-as 65000
+           neighbor 2001:db8:181:6::0 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:181::2/128
+            neighbor 2001:db8:181:4::0 activate
+            neighbor 2001:db8:181:4::0 route-reflector-client
+            neighbor 2001:db8:181:4::0 next-hop-self force
+            neighbor 2001:db8:181:5::0 activate
+            neighbor 2001:db8:181:5::0 route-reflector-client
+            neighbor 2001:db8:181:5::0 next-hop-self force
+            neighbor 2001:db8:181:6::0 activate
+            neighbor 2001:db8:181:6::0 route-reflector-client
+            neighbor 2001:db8:181:6::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:181:4::0 activate
+            neighbor 2001:db8:181:4::0 route-reflector-client
+            neighbor 2001:db8:181:5::0 activate
+            neighbor 2001:db8:181:5::0 route-reflector-client
+            neighbor 2001:db8:181:6::0 activate
+            neighbor 2001:db8:181:6::0 route-reflector-client
+           exit-address-family
+          end
+
+  lf1:
+    loopbacks:
+      - 2001:db8:181::11/128
+    linux:
+      bonds:
+        - name: bond0
+          mode: active-backup
+          interfaces: [eth3]
+      bridges:
+        - name: br10
+          interfaces: [bond0]
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 2001:db8:181::11
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                learning: false
+                neighSuppress: true
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:181:1::0/127 dev eth1
+          ip -6 addr replace 2001:db8:181:4::0/127 dev eth2
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf1
+          router bgp 65000
+           bgp router-id 10.255.181.11
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:181:1::1 remote-as 65000
+           neighbor 2001:db8:181:4::1 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:181::11/128
+            neighbor 2001:db8:181:1::1 activate
+            neighbor 2001:db8:181:4::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:181:1::1 activate
+            neighbor 2001:db8:181:4::1 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          interface bond0
+           evpn mh es-id 1
+           evpn mh es-sys-mac 02:00:00:00:81:aa
+           evpn mh es-df-pref 200
+          end
+
+  lf2:
+    loopbacks:
+      - 2001:db8:181::12/128
+    linux:
+      bonds:
+        - name: bond0
+          mode: active-backup
+          interfaces: [eth3]
+      bridges:
+        - name: br10
+          interfaces: [bond0]
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 2001:db8:181::12
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                learning: false
+                neighSuppress: true
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:181:2::0/127 dev eth1
+          ip -6 addr replace 2001:db8:181:5::0/127 dev eth2
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf2
+          router bgp 65000
+           bgp router-id 10.255.181.12
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:181:2::1 remote-as 65000
+           neighbor 2001:db8:181:5::1 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:181::12/128
+            neighbor 2001:db8:181:2::1 activate
+            neighbor 2001:db8:181:5::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:181:2::1 activate
+            neighbor 2001:db8:181:5::1 activate
+            advertise-all-vni
+           exit-address-family
+          exit
+          interface bond0
+           evpn mh es-id 1
+           evpn mh es-sys-mac 02:00:00:00:81:aa
+           evpn mh es-df-pref 100
+          end
+
+  lf3:
+    loopbacks:
+      - 2001:db8:181::13/128
+    linux:
+      bridges:
+        - name: br10
+          interfaces: [eth3]
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 2001:db8:181::13
+              nolearning: true
+              addrgenmode: none
+              bridgeSlave:
+                learning: false
+                neighSuppress: true
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip -6 addr replace 2001:db8:181:3::0/127 dev eth1
+          ip -6 addr replace 2001:db8:181:6::0/127 dev eth2
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf3
+          router bgp 65000
+           bgp router-id 10.255.181.13
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:181:3::1 remote-as 65000
+           neighbor 2001:db8:181:6::1 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:181::13/128
+            neighbor 2001:db8:181:3::1 activate
+            neighbor 2001:db8:181:6::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:181:3::1 activate
+            neighbor 2001:db8:181:6::1 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  host31:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ping -c 1 -W 1 10.10.181.254 >/dev/null 2>&1 || true
+
+  srv:
+    image: nicolaka/netshoot:latest
+    command: ["sh", "-lc", "sleep infinity"]
+    linux:
+      bonds:
+        - name: bond0
+          mode: active-backup
+          mac: 02:00:00:00:81:11
+          addresses: [10.10.181.11/24]
+          interfaces: [eth1, eth2]
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          ip link set lo up
+          ping -c 1 -W 1 10.10.181.254 >/dev/null 2>&1 || true
+      - kind: shell
+        run: |
+          set -e
+          sleep 10
+
+links:
+  - name: lf1-sp1
+    type: p2p
+    members:
+      - { router: lf1, ifname: eth1 }
+      - { router: sp1, ifname: eth1 }
+
+  - name: lf2-sp1
+    type: p2p
+    members:
+      - { router: lf2, ifname: eth1 }
+      - { router: sp1, ifname: eth2 }
+
+  - name: lf3-sp1
+    type: p2p
+    members:
+      - { router: lf3, ifname: eth1 }
+      - { router: sp1, ifname: eth3 }
+
+  - name: lf1-sp2
+    type: p2p
+    members:
+      - { router: lf1, ifname: eth2 }
+      - { router: sp2, ifname: eth1 }
+
+  - name: lf2-sp2
+    type: p2p
+    members:
+      - { router: lf2, ifname: eth2 }
+      - { router: sp2, ifname: eth2 }
+
+  - name: lf3-sp2
+    type: p2p
+    members:
+      - { router: lf3, ifname: eth2 }
+      - { router: sp2, ifname: eth3 }
+
+  - name: lf1-srv
+    type: p2p
+    members:
+      - { router: lf1, ifname: eth3 }
+      - { router: srv, ifname: eth1 }
+
+  - name: lf2-srv
+    type: p2p
+    members:
+      - { router: lf2, ifname: eth3 }
+      - { router: srv, ifname: eth2 }
+
+  - name: lf3-host31
+    type: bridge
+    members:
+      - { router: lf3, ifname: eth3 }
+      - { router: host31, ifname: eth1, ipv4: 10.10.181.13/24, mac: 02:00:00:00:81:13 }
+
+pings:
+  - name: srv-to-host31
+    from:
+      router: srv
+      address: 10.10.181.11
+    to: 10.10.181.13
+    count: 5
+
+  - name: host31-to-srv
+    from:
+      router: host31
+      address: 10.10.181.13
+    to: 10.10.181.11
+    count: 5
