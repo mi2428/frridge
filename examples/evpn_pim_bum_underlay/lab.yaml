@@ -1,0 +1,182 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-pim-bum-underlay
+  workdir: .frridge
+
+routers:
+  rr:
+    loopbacks:
+      - 10.255.81.100/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pimd
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pimd)"
+          fi
+          "$daemon" -d -A 127.0.0.1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pimd; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname rr
+          ip pim rp 10.255.81.100 239.1.1.0/24
+          interface lo
+           ip pim
+          exit
+          interface eth1
+           ip pim
+          exit
+          interface eth2
+           ip pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.81.100
+           bgp cluster-id 10.255.81.100
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 10.0.81.0 remote-as 65000
+           neighbor 10.0.81.2 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.81.100/32
+            neighbor 10.0.81.0 activate
+            neighbor 10.0.81.0 route-reflector-client
+            neighbor 10.0.81.0 next-hop-self force
+            neighbor 10.0.81.2 activate
+            neighbor 10.0.81.2 route-reflector-client
+            neighbor 10.0.81.2 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.81.0 activate
+            neighbor 10.0.81.0 route-reflector-client
+            neighbor 10.0.81.2 activate
+            neighbor 10.0.81.2 route-reflector-client
+           exit-address-family
+          end
+
+  pe1:
+    loopbacks:
+      - 10.255.81.11/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pimd
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pimd)"
+          fi
+          ip link add br10 type bridge
+          ip link set br10 up
+          ip link add vxlan100 type vxlan id 100 local 10.255.81.11 dev eth1 group 239.1.1.100 dstport 4789 nolearning
+          ip link set vxlan100 master br10
+          ip link set vxlan100 up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master br10
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip link set eth0 address 02:00:00:00:81:11
+          ip netns exec host ip addr add 10.10.81.11/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          "$daemon" -d -A 127.0.0.1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pimd; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe1
+          ip pim rp 10.255.81.100 239.1.1.0/24
+          interface lo
+           ip pim
+          exit
+          interface eth1
+           ip pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.81.11
+           no bgp default ipv4-unicast
+           neighbor 10.0.81.1 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.81.11/32
+            neighbor 10.0.81.1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.81.1 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  pe2:
+    loopbacks:
+      - 10.255.81.12/32
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pimd
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pimd)"
+          fi
+          ip link add br10 type bridge
+          ip link set br10 up
+          ip link add vxlan100 type vxlan id 100 local 10.255.81.12 dev eth1 group 239.1.1.100 dstport 4789 nolearning
+          ip link set vxlan100 master br10
+          ip link set vxlan100 up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master br10
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip link set eth0 address 02:00:00:00:81:12
+          ip netns exec host ip addr add 10.10.81.12/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          "$daemon" -d -A 127.0.0.1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pimd; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname pe2
+          ip pim rp 10.255.81.100 239.1.1.0/24
+          interface lo
+           ip pim
+          exit
+          interface eth1
+           ip pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.81.12
+           no bgp default ipv4-unicast
+           neighbor 10.0.81.3 remote-as 65000
+           address-family ipv4 unicast
+            network 10.255.81.12/32
+            neighbor 10.0.81.3 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 10.0.81.3 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+links:
+  - name: rr-pe1
+    type: p2p
+    members:
+      - { router: pe1, ifname: eth1, ipv4: 10.0.81.0/31 }
+      - { router: rr, ifname: eth1, ipv4: 10.0.81.1/31 }
+
+  - name: rr-pe2
+    type: p2p
+    members:
+      - { router: pe2, ifname: eth1, ipv4: 10.0.81.2/31 }
+      - { router: rr, ifname: eth2, ipv4: 10.0.81.3/31 }
