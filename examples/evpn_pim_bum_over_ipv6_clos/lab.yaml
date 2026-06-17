@@ -1,0 +1,404 @@
+apiVersion: frridge/v1alpha1
+
+lab:
+  name: evpn-pim-bum-ipv6-clos
+  workdir: .frridge
+  defaults:
+    sysctls:
+      net.ipv6.conf.all.forwarding: "1"
+
+routers:
+  sp1:
+    loopbacks:
+      - 2001:db8:176::1/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pim6d
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pim6d)"
+          fi
+          ip -6 addr replace 2001:db8:176:1::1/127 dev eth1
+          ip -6 addr replace 2001:db8:176:2::1/127 dev eth2
+          ip -6 addr replace 2001:db8:176:3::1/127 dev eth3
+          sysctl -w net.ipv6.conf.lo.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth1.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth2.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth3.mc_forwarding=1
+          "$daemon" -d -A ::1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pim6d; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp1
+          ipv6 pim rp 2001:db8:176::1 ff3e::/16
+          interface lo
+           ipv6 pim
+          exit
+          interface eth1
+           ipv6 pim
+          exit
+          interface eth2
+           ipv6 pim
+          exit
+          interface eth3
+           ipv6 pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.176.1
+           bgp cluster-id 10.255.176.1
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:176:1::0 remote-as 65000
+           neighbor 2001:db8:176:2::0 remote-as 65000
+           neighbor 2001:db8:176:3::0 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:176::1/128
+            neighbor 2001:db8:176:1::0 activate
+            neighbor 2001:db8:176:1::0 route-reflector-client
+            neighbor 2001:db8:176:1::0 next-hop-self force
+            neighbor 2001:db8:176:2::0 activate
+            neighbor 2001:db8:176:2::0 route-reflector-client
+            neighbor 2001:db8:176:2::0 next-hop-self force
+            neighbor 2001:db8:176:3::0 activate
+            neighbor 2001:db8:176:3::0 route-reflector-client
+            neighbor 2001:db8:176:3::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:176:1::0 activate
+            neighbor 2001:db8:176:1::0 route-reflector-client
+            neighbor 2001:db8:176:2::0 activate
+            neighbor 2001:db8:176:2::0 route-reflector-client
+            neighbor 2001:db8:176:3::0 activate
+            neighbor 2001:db8:176:3::0 route-reflector-client
+           exit-address-family
+          end
+
+  sp2:
+    loopbacks:
+      - 2001:db8:176::2/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pim6d
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pim6d)"
+          fi
+          ip -6 addr replace 2001:db8:176:4::1/127 dev eth1
+          ip -6 addr replace 2001:db8:176:5::1/127 dev eth2
+          ip -6 addr replace 2001:db8:176:6::1/127 dev eth3
+          sysctl -w net.ipv6.conf.lo.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth1.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth2.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth3.mc_forwarding=1
+          "$daemon" -d -A ::1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pim6d; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname sp2
+          ipv6 pim rp 2001:db8:176::1 ff3e::/16
+          interface lo
+           ipv6 pim
+          exit
+          interface eth1
+           ipv6 pim
+          exit
+          interface eth2
+           ipv6 pim
+          exit
+          interface eth3
+           ipv6 pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.176.2
+           bgp cluster-id 10.255.176.2
+           bgp retain route-target all
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:176:4::0 remote-as 65000
+           neighbor 2001:db8:176:5::0 remote-as 65000
+           neighbor 2001:db8:176:6::0 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:176::2/128
+            neighbor 2001:db8:176:4::0 activate
+            neighbor 2001:db8:176:4::0 route-reflector-client
+            neighbor 2001:db8:176:4::0 next-hop-self force
+            neighbor 2001:db8:176:5::0 activate
+            neighbor 2001:db8:176:5::0 route-reflector-client
+            neighbor 2001:db8:176:5::0 next-hop-self force
+            neighbor 2001:db8:176:6::0 activate
+            neighbor 2001:db8:176:6::0 route-reflector-client
+            neighbor 2001:db8:176:6::0 next-hop-self force
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:176:4::0 activate
+            neighbor 2001:db8:176:4::0 route-reflector-client
+            neighbor 2001:db8:176:5::0 activate
+            neighbor 2001:db8:176:5::0 route-reflector-client
+            neighbor 2001:db8:176:6::0 activate
+            neighbor 2001:db8:176:6::0 route-reflector-client
+           exit-address-family
+          end
+
+  lf1:
+    loopbacks:
+      - 2001:db8:176::11/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pim6d
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pim6d)"
+          fi
+          ip -6 addr replace 2001:db8:176:1::0/127 dev eth1
+          ip -6 addr replace 2001:db8:176:4::0/127 dev eth2
+          sysctl -w net.ipv6.conf.lo.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth1.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth2.mc_forwarding=1
+          ip link add br10 type bridge
+          ip link set br10 up
+          ip link add vxlan100 type vxlan id 100 dev eth1 group ff3e::176 local 2001:db8:176::11 dstport 4789 nolearning
+          ip link set vxlan100 master br10
+          ip link set vxlan100 up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master br10
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip link set eth0 address 02:00:00:00:76:11
+          ip netns exec host ip addr add 10.10.176.11/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ping -c 1 -W 1 10.10.176.254 >/dev/null 2>&1 || true
+          "$daemon" -d -A ::1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pim6d; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf1
+          ipv6 pim rp 2001:db8:176::1 ff3e::/16
+          interface lo
+           ipv6 pim
+          exit
+          interface eth1
+           ipv6 pim
+          exit
+          interface eth2
+           ipv6 pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.176.11
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:176:1::1 remote-as 65000
+           neighbor 2001:db8:176:4::1 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:176::11/128
+            neighbor 2001:db8:176:1::1 activate
+            neighbor 2001:db8:176:4::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:176:1::1 activate
+            neighbor 2001:db8:176:4::1 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  lf2:
+    loopbacks:
+      - 2001:db8:176::12/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pim6d
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pim6d)"
+          fi
+          ip -6 addr replace 2001:db8:176:2::0/127 dev eth1
+          ip -6 addr replace 2001:db8:176:5::0/127 dev eth2
+          sysctl -w net.ipv6.conf.lo.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth1.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth2.mc_forwarding=1
+          ip link add br10 type bridge
+          ip link set br10 up
+          ip link add vxlan100 type vxlan id 100 dev eth1 group ff3e::176 local 2001:db8:176::12 dstport 4789 nolearning
+          ip link set vxlan100 master br10
+          ip link set vxlan100 up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master br10
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip link set eth0 address 02:00:00:00:76:12
+          ip netns exec host ip addr add 10.10.176.12/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ping -c 1 -W 1 10.10.176.254 >/dev/null 2>&1 || true
+          "$daemon" -d -A ::1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pim6d; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf2
+          ipv6 pim rp 2001:db8:176::1 ff3e::/16
+          interface lo
+           ipv6 pim
+          exit
+          interface eth1
+           ipv6 pim
+          exit
+          interface eth2
+           ipv6 pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.176.12
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:176:2::1 remote-as 65000
+           neighbor 2001:db8:176:5::1 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:176::12/128
+            neighbor 2001:db8:176:2::1 activate
+            neighbor 2001:db8:176:5::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:176:2::1 activate
+            neighbor 2001:db8:176:5::1 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+  lf3:
+    loopbacks:
+      - 2001:db8:176::13/128
+    commands:
+      - kind: shell
+        run: |
+          set -e
+          daemon=/usr/lib/frr/pim6d
+          if [ ! -x "$daemon" ]; then
+            daemon="$(command -v pim6d)"
+          fi
+          ip -6 addr replace 2001:db8:176:3::0/127 dev eth1
+          ip -6 addr replace 2001:db8:176:6::0/127 dev eth2
+          sysctl -w net.ipv6.conf.lo.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth1.mc_forwarding=1
+          sysctl -w net.ipv6.conf.eth2.mc_forwarding=1
+          ip link add br10 type bridge
+          ip link set br10 up
+          ip link add vxlan100 type vxlan id 100 dev eth1 group ff3e::176 local 2001:db8:176::13 dstport 4789 nolearning
+          ip link set vxlan100 master br10
+          ip link set vxlan100 up
+          ip link add lan0 type veth peer name host0
+          ip link set lan0 master br10
+          ip link set lan0 up
+          ip netns add host
+          ip link set host0 netns host
+          ip netns exec host ip link set lo up
+          ip netns exec host ip link set host0 name eth0
+          ip netns exec host ip link set eth0 address 02:00:00:00:76:13
+          ip netns exec host ip addr add 10.10.176.13/24 dev eth0
+          ip netns exec host ip link set eth0 up
+          ip netns exec host ping -c 1 -W 1 10.10.176.254 >/dev/null 2>&1 || true
+          "$daemon" -d -A ::1
+          until vtysh -c 'show daemons' 2>/dev/null | grep -qw pim6d; do
+            sleep 1
+          done
+      - kind: vtysh
+        run: |
+          configure terminal
+          hostname lf3
+          ipv6 pim rp 2001:db8:176::1 ff3e::/16
+          interface lo
+           ipv6 pim
+          exit
+          interface eth1
+           ipv6 pim
+          exit
+          interface eth2
+           ipv6 pim
+          exit
+          router bgp 65000
+           bgp router-id 10.255.176.13
+           no bgp default ipv4-unicast
+           neighbor 2001:db8:176:3::1 remote-as 65000
+           neighbor 2001:db8:176:6::1 remote-as 65000
+           address-family ipv6 unicast
+            network 2001:db8:176::13/128
+            neighbor 2001:db8:176:3::1 activate
+            neighbor 2001:db8:176:6::1 activate
+           exit-address-family
+           address-family l2vpn evpn
+            neighbor 2001:db8:176:3::1 activate
+            neighbor 2001:db8:176:6::1 activate
+            advertise-all-vni
+           exit-address-family
+          end
+
+links:
+  - name: lf1-sp1
+    type: p2p
+    members:
+      - { router: lf1, ifname: eth1 }
+      - { router: sp1, ifname: eth1 }
+
+  - name: lf2-sp1
+    type: p2p
+    members:
+      - { router: lf2, ifname: eth1 }
+      - { router: sp1, ifname: eth2 }
+
+  - name: lf3-sp1
+    type: p2p
+    members:
+      - { router: lf3, ifname: eth1 }
+      - { router: sp1, ifname: eth3 }
+
+  - name: lf1-sp2
+    type: p2p
+    members:
+      - { router: lf1, ifname: eth2 }
+      - { router: sp2, ifname: eth1 }
+
+  - name: lf2-sp2
+    type: p2p
+    members:
+      - { router: lf2, ifname: eth2 }
+      - { router: sp2, ifname: eth2 }
+
+  - name: lf3-sp2
+    type: p2p
+    members:
+      - { router: lf3, ifname: eth2 }
+      - { router: sp2, ifname: eth3 }
+
+pings:
+  - name: lf1-host-to-lf2-host
+    from:
+      router: lf1
+      namespace: host
+    to: 10.10.176.12
+
+  - name: lf1-host-to-lf3-host
+    from:
+      router: lf1
+      namespace: host
+    to: 10.10.176.13
+
+  - name: lf2-host-to-lf3-host
+    from:
+      router: lf2
+      namespace: host
+    to: 10.10.176.13
