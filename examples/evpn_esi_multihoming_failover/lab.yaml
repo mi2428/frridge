@@ -46,21 +46,20 @@ routers:
   pe1:
     loopbacks:
       - 10.255.81.11/32
+    linux:
+      bonds:
+        - name: bond0
+          mode: active-backup
+          master: br10
+          interfaces: [eth2]
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.81.11
+              nolearning: true
     commands:
-      - kind: shell
-        run: |
-          set -e
-          ip link add bond0 type bond mode active-backup
-          ip link set eth2 down
-          ip link set eth2 master bond0
-          ip link set eth2 up
-          ip link set bond0 up
-          ip link add br10 type bridge
-          ip link set br10 up
-          ip link add vxlan100 type vxlan id 100 local 10.255.81.11 dstport 4789 nolearning
-          ip link set vxlan100 master br10
-          ip link set vxlan100 up
-          ip link set bond0 master br10
       - kind: vtysh
         run: |
           configure terminal
@@ -87,21 +86,20 @@ routers:
   pe2:
     loopbacks:
       - 10.255.81.12/32
+    linux:
+      bonds:
+        - name: bond0
+          mode: active-backup
+          master: br10
+          interfaces: [eth2]
+      bridges:
+        - name: br10
+          vxlans:
+            - name: vxlan100
+              vni: 100
+              local: 10.255.81.12
+              nolearning: true
     commands:
-      - kind: shell
-        run: |
-          set -e
-          ip link add bond0 type bond mode active-backup
-          ip link set eth2 down
-          ip link set eth2 master bond0
-          ip link set eth2 up
-          ip link set bond0 up
-          ip link add br10 type bridge
-          ip link set br10 up
-          ip link add vxlan100 type vxlan id 100 local 10.255.81.12 dstport 4789 nolearning
-          ip link set vxlan100 master br10
-          ip link set vxlan100 up
-          ip link set bond0 master br10
       - kind: vtysh
         run: |
           configure terminal
