@@ -24,7 +24,7 @@ already contains FRR and `vtysh`.
 
 >[!TIP]
 > Prebuilt tarballs are also available from GitHub Releases for macOS and Linux, with amd64 and arm64 builds for each platform.
-> Each archive contains `frridge`, `frridge-mp`, and this README.
+> Each archive contains `frridge`, `frridge-mp`, this README, and `LICENSE`.
 > Use `frridge` on a Linux host, or `frridge-mp` on macOS when you want to run the lab inside Multipass.
 >
 > ```console

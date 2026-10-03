@@ -340,6 +340,7 @@ dist-smoke: ## Smoke-test the host-matching dist tarball
 	trap 'rm -rf "$$tmpdir"' EXIT; \
 	tar -C "$$tmpdir" -xzf "$$archive"; \
 	bundle_dir="$$tmpdir/$(DIST_APP)-$(HOST_GOOS)-$(HOST_GOARCH)"; \
+	cmp LICENSE "$$bundle_dir/LICENSE" || exit $$?; \
 	"$$bundle_dir/$(APP)" --help >/dev/null; \
 	"$$bundle_dir/$(APP)" --version >/dev/null; \
 	"$$bundle_dir/$(MP_APP)" --help >/dev/null; \
@@ -365,7 +366,7 @@ _dist.$(1).$(2):
 	CGO_ENABLED=0 GOOS="$(1)" GOARCH="$(2)" "$(GO)" build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$$$$stage/$(APP)" ./cmd/$(APP); \
 	CGO_ENABLED=0 GOOS="$(1)" GOARCH="$(2)" "$(GO)" build -trimpath -ldflags "$(GO_LDFLAGS)" -o "$$$$stage/$(MP_APP)" ./cmd/$(MP_APP); \
 	chmod +x "$$$$stage/$(APP)" "$$$$stage/$(MP_APP)"; \
-	cp README.md "$$$$stage/README.md"; \
+	cp README.md LICENSE "$$$$stage/"; \
 	tar -C "$(DISTDIR)" -czf "$(DISTDIR)/$$$$bundle.tar.gz" "$$$$bundle"; \
 	rm -rf "$$$$stage"; \
 	printf 'Wrote %s/%s.tar.gz\n' "$(DISTDIR)" "$$$$bundle"
