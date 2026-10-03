@@ -91,11 +91,15 @@ func NewDefaultManager() (*Manager, error) {
 }
 
 // Up creates or recreates the lab described by topologyPath.
-func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (err error) {
+func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) error {
 	if err := requireHostNetworking(); err != nil {
 		return err
 	}
+	return m.up(ctx, topologyPath, opts)
+}
 
+// up runs startup after the public entry point's host privilege check.
+func (m *Manager) up(ctx context.Context, topologyPath string, opts UpOptions) (err error) {
 	topology, err := config.LoadFile(topologyPath)
 	if err != nil {
 		return err
@@ -134,7 +138,11 @@ func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (
 
 	defer func() {
 		if err != nil {
-			_ = m.cleanupRuntime(ctx, topology, snapshot, false)
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if cleanupErr := m.cleanupRuntime(cleanupCtx, topology, snapshot, false); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("rollback lab startup: %w", cleanupErr))
+			}
 		}
 	}()
 
@@ -168,6 +176,10 @@ func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (
 		if createErr != nil {
 			return createErr
 		}
+		snapshot.Containers[routerName] = state.ContainerState{
+			ID:        containerID,
+			ConfigDir: prep.ConfigDir,
+		}
 		if startErr := m.docker.StartContainer(ctx, containerID); startErr != nil {
 			return startErr
 		}
@@ -177,11 +189,9 @@ func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (
 			return inspectErr
 		}
 
-		snapshot.Containers[routerName] = state.ContainerState{
-			ID:        containerID,
-			PID:       inspect.PID,
-			ConfigDir: prep.ConfigDir,
-		}
+		containerState := snapshot.Containers[routerName]
+		containerState.PID = inspect.PID
+		snapshot.Containers[routerName] = containerState
 	}
 
 	if err := m.configureLinks(topology, snapshot); err != nil {
@@ -194,6 +204,9 @@ func (m *Manager) Up(ctx context.Context, topologyPath string, opts UpOptions) (
 		return err
 	}
 	if err := m.runRouterCommands(ctx, resolvedRouters, snapshot, prepared); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := state.Write(topology.StatePath(), *snapshot); err != nil {

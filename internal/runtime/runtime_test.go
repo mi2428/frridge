@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,31 +41,48 @@ type fakeDockerClient struct {
 	listErr   error
 	removeErr error
 	removed   []string
+	startFn   func(context.Context, string) error
+	inspectFn func(context.Context, string) (docker.Inspect, error)
+	listFn    func(context.Context, map[string]string) ([]string, error)
+	removeFn  func(context.Context, string) error
 }
 
 type fakeNetworkManager struct {
 	ops       [][]string
 	deleteErr error
+	ensureFn  func(string, int) error
 }
 
-func (f *fakeDockerClient) CreateContainer(context.Context, docker.ContainerSpec) (string, error) {
-	return "", nil
+func (f *fakeDockerClient) CreateContainer(_ context.Context, spec docker.ContainerSpec) (string, error) {
+	return spec.Name, nil
 }
 
-func (f *fakeDockerClient) StartContainer(context.Context, string) error {
+func (f *fakeDockerClient) StartContainer(ctx context.Context, id string) error {
+	if f.startFn != nil {
+		return f.startFn(ctx, id)
+	}
 	return nil
 }
 
-func (f *fakeDockerClient) InspectContainer(context.Context, string) (docker.Inspect, error) {
-	return docker.Inspect{}, nil
+func (f *fakeDockerClient) InspectContainer(ctx context.Context, id string) (docker.Inspect, error) {
+	if f.inspectFn != nil {
+		return f.inspectFn(ctx, id)
+	}
+	return docker.Inspect{ID: id, PID: 101}, nil
 }
 
-func (f *fakeDockerClient) ListContainers(context.Context, map[string]string) ([]string, error) {
+func (f *fakeDockerClient) ListContainers(ctx context.Context, labels map[string]string) ([]string, error) {
+	if f.listFn != nil {
+		return f.listFn(ctx, labels)
+	}
 	return nil, f.listErr
 }
 
-func (f *fakeDockerClient) RemoveContainer(_ context.Context, id string) error {
+func (f *fakeDockerClient) RemoveContainer(ctx context.Context, id string) error {
 	f.removed = append(f.removed, id)
+	if f.removeFn != nil {
+		return f.removeFn(ctx, id)
+	}
 	return f.removeErr
 }
 
@@ -89,6 +107,9 @@ func (f *fakeNetworkManager) record(op ...string) {
 
 func (f *fakeNetworkManager) EnsureBridge(name string, mtu int) error {
 	f.record("ensure-bridge", name, strconv.Itoa(mtu))
+	if f.ensureFn != nil {
+		return f.ensureFn(name, mtu)
+	}
 	return nil
 }
 
@@ -263,6 +284,178 @@ func TestCleanupRuntimePreservesArtifactsOnFailureAndAllowsRetry(t *testing.T) {
 					t.Fatalf("configuration after purge=%t: %v", purge, err)
 				}
 			})
+		}
+	}
+}
+
+func startupTopologyFile(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lab.yaml")
+	yaml := fmt.Sprintf(`apiVersion: frridge/v1alpha1
+lab:
+  name: startup
+  workdir: %q
+routers:
+  r1: {}
+  r2: {}
+links:
+  - name: lan
+    type: bridge
+    members:
+      - router: r1
+        ifname: eth1
+      - router: r2
+        ifname: eth1
+`, filepath.Join(dir, "state"))
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func testInterruptedStartupRollback(t *testing.T, native bool) {
+	t.Helper()
+	for _, stage := range []string{"start", "inspect", "links"} {
+		for _, failure := range []string{"none", "list", "remove", "network"} {
+			t.Run(stage+"/rollback="+failure, func(t *testing.T) {
+				path := startupTopologyFile(t)
+				type contextKey struct{}
+				ctx, cancel := context.WithCancel(context.WithValue(context.Background(), contextKey{}, "startup-value"))
+				defer cancel()
+				cleanupFailure := errors.New("injected rollback failure")
+				checkCleanupContext := func(cleanupCtx context.Context) {
+					t.Helper()
+					deadline, bounded := cleanupCtx.Deadline()
+					remaining := time.Until(deadline)
+					if cleanupCtx.Err() != nil || !bounded || remaining <= 0 || remaining > 30*time.Second || cleanupCtx.Value(contextKey{}) != "startup-value" {
+						t.Fatalf("rollback context: err=%v, bounded=%t, remaining=%v, value=%v", cleanupCtx.Err(), bounded, remaining, cleanupCtx.Value(contextKey{}))
+					}
+				}
+				fakeDocker := &fakeDockerClient{}
+				fakeDocker.startFn = func(startCtx context.Context, _ string) error {
+					if stage == "start" {
+						cancel()
+						return startCtx.Err()
+					}
+					return nil
+				}
+				fakeDocker.inspectFn = func(inspectCtx context.Context, id string) (docker.Inspect, error) {
+					if stage == "inspect" {
+						cancel()
+						return docker.Inspect{}, inspectCtx.Err()
+					}
+					return docker.Inspect{ID: id, PID: 101}, nil
+				}
+				lists := 0
+				fakeDocker.listFn = func(listCtx context.Context, labels map[string]string) ([]string, error) {
+					lists++
+					if labels[labelLab] != "startup" || labels[labelManaged] != "true" {
+						t.Fatalf("cleanup discovery labels = %v", labels)
+					}
+					if lists == 1 {
+						return nil, nil
+					}
+					checkCleanupContext(listCtx)
+					if failure == "list" {
+						return nil, cleanupFailure
+					}
+					return nil, nil
+				}
+				fakeDocker.removeFn = func(removeCtx context.Context, _ string) error {
+					checkCleanupContext(removeCtx)
+					if failure == "remove" {
+						return cleanupFailure
+					}
+					return nil
+				}
+				fakeNetwork := &fakeNetworkManager{}
+				if stage == "links" {
+					fakeNetwork.ensureFn = func(string, int) error { cancel(); return nil }
+				}
+				if failure == "network" {
+					fakeNetwork.deleteErr = cleanupFailure
+				}
+				manager := NewManager(fakeDocker, fakeNetwork)
+				up := manager.up
+				if native {
+					up = manager.Up
+				}
+				err := up(ctx, path, UpOptions{})
+				if !errors.Is(err, context.Canceled) || (failure != "none" && !errors.Is(err, cleanupFailure)) {
+					t.Fatalf("startup error = %v, want original cancellation and rollback=%s", err, failure)
+				}
+				wantContainers := 1
+				if stage == "links" {
+					wantContainers = 2
+				}
+				if len(fakeDocker.removed) != wantContainers || lists != 2 {
+					t.Fatalf("created ID not recovered before start/inspect: removed=%v, lists=%d", fakeDocker.removed, lists)
+				}
+				for _, id := range fakeDocker.removed {
+					if id != containerName("startup", "r1") && (stage != "links" || id != containerName("startup", "r2")) {
+						t.Fatalf("rollback removed an unknown ID %q", id)
+					}
+				}
+				if len(fakeNetwork.ops) == 0 {
+					t.Fatal("rollback skipped networking after cancellation")
+				}
+				topology, err := config.LoadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(filepath.Join(topology.RouterConfigDir("r1"), "frr.conf")); err != nil {
+					t.Fatalf("rollback lost generated FRR configuration: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestInterruptedStartupRollbackWithFakes(t *testing.T) {
+	t.Parallel()
+	testInterruptedStartupRollback(t, false)
+}
+
+func TestNativeUpInterruptedRollbackWithFakes(t *testing.T) {
+	if err := requireHostNetworking(); err != nil {
+		t.Skipf("native privilege-gated startup unsupported: %v", err)
+	}
+	testInterruptedStartupRollback(t, true)
+}
+
+func TestStartupSuccessAndRecreateWithFakes(t *testing.T) {
+	t.Parallel()
+	path := startupTopologyFile(t)
+	fakeDocker := &fakeDockerClient{}
+	fakeNetwork := &fakeNetworkManager{}
+	manager := NewManager(fakeDocker, fakeNetwork)
+	for _, recreate := range []bool{false, true} {
+		if err := manager.up(context.Background(), path, UpOptions{Recreate: recreate}); err != nil {
+			t.Fatalf("successful startup recreate=%t: %v", recreate, err)
+		}
+		topology, err := config.LoadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := state.Read(topology.StatePath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Containers) != 2 || len(fakeNetwork.ops) == 0 {
+			t.Fatalf("successful startup snapshot=%+v, network ops=%v", snapshot, fakeNetwork.ops)
+		}
+		for router, container := range snapshot.Containers {
+			if container.ID != containerName("startup", router) || container.PID != 101 || container.ConfigDir != topology.RouterConfigDir(router) {
+				t.Fatalf("successful startup container=%+v", container)
+			}
+		}
+		wantRemoved := 0
+		if recreate {
+			wantRemoved = 2
+		}
+		if len(fakeDocker.removed) != wantRemoved {
+			t.Fatalf("success incorrectly ran rollback: removed=%v, want count=%d", fakeDocker.removed, wantRemoved)
 		}
 	}
 }
