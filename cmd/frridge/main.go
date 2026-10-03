@@ -29,5 +29,7 @@ func main() {
 func executeCommand(root *cobra.Command) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	stopOnCancel := context.AfterFunc(ctx, stop)
+	defer stopOnCancel()
 	return root.ExecuteContext(ctx)
 }
