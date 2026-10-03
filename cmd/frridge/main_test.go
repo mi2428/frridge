@@ -38,7 +38,7 @@ func (s *interruptedService) Up(ctx context.Context, _ string, _ labruntime.UpOp
 
 func TestNativeCLISignalCancelsStartupContext(t *testing.T) {
 	if signalName := os.Getenv("FRRIDGE_TEST_CLI_SIGNAL"); signalName != "" {
-		var interrupt os.Signal = os.Interrupt
+		interrupt := os.Interrupt
 		if signalName == "SIGTERM" {
 			interrupt = syscall.SIGTERM
 		}
