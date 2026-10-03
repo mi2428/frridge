@@ -15,9 +15,9 @@ DISTDIR := dist
 
 # Toolchain
 GO          ?= go
-STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@latest
-REVIVE      ?= $(GO) run github.com/mgechev/revive@latest -formatter friendly
-MODERNIZE   ?= $(GO) run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -test
+STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@v0.7.0
+REVIVE      ?= $(GO) run github.com/mgechev/revive@v1.15.0 -formatter friendly
+MODERNIZE   ?= $(GO) run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@v0.22.0 -test
 GO_LDFLAGS  := -s -w -X $(VERSION_PKG).Version=$(PACKAGE_VERSION)
 HOST_GOOS   = $(shell $(GO) env GOOS)
 HOST_GOARCH = $(shell $(GO) env GOARCH)
