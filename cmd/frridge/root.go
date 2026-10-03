@@ -60,6 +60,19 @@ func newRootCommand(service labruntime.Service) *cobra.Command {
 	downCmd.Flags().BoolVar(&purge, "purge", false, "Delete persisted router config in addition to runtime state")
 	root.AddCommand(downCmd)
 
+	migrateCmd := &cobra.Command{
+		Use:   "migrate-state",
+		Short: "Record legacy owned bridges using the original lab YAML",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if topologyPath == "" {
+				return fmt.Errorf("migrate-state requires --file with the original lab YAML")
+			}
+			return service.MigrateState(cmd.Context(), topologyPath)
+		},
+	}
+	root.AddCommand(migrateCmd)
+
 	consoleCmd := &cobra.Command{
 		Use:   "console <router>",
 		Short: "Open vtysh or a shell inside a running router container",

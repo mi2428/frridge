@@ -20,6 +20,7 @@ type fakeService struct {
 	pingPath    string
 	pingName    string
 	pingResults []labruntime.PingResult
+	migratePath string
 }
 
 func (f *fakeService) Up(_ context.Context, topologyPath string, opts labruntime.UpOptions) error {
@@ -32,6 +33,30 @@ func (f *fakeService) Down(_ context.Context, topologyPath string, opts labrunti
 	f.downPath = topologyPath
 	f.downOptions = opts
 	return nil
+}
+
+func (f *fakeService) MigrateState(_ context.Context, originalTopologyPath string) error {
+	f.migratePath = originalTopologyPath
+	return nil
+}
+
+func TestMigrateStateCommand(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"migrate-state"}, {"--file", "original.yaml", "migrate-state"}, {"--file", "original.yaml", "migrate-state", "extra"}} {
+		service := &fakeService{}
+		cmd := newRootCommand(service)
+		cmd.SetOut(new(bytes.Buffer))
+		cmd.SetErr(new(bytes.Buffer))
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		if len(args) == 3 {
+			if err != nil || service.migratePath != "original.yaml" {
+				t.Fatalf("migration err=%v, path=%q", err, service.migratePath)
+			}
+		} else if err == nil || service.migratePath != "" {
+			t.Fatalf("invalid migration args accepted: err=%v, path=%q", err, service.migratePath)
+		}
+	}
 }
 
 func (f *fakeService) Console(_ context.Context, topologyPath, router string, opts labruntime.ConsoleOptions) error {

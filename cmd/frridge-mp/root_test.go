@@ -38,6 +38,33 @@ func (f *fakeService) Frridge(_ context.Context, req multipass.Request, args []s
 	return nil
 }
 
+func TestMigrateStateCommandForwardsOriginalTopology(t *testing.T) {
+	t.Parallel()
+	for _, missing := range []bool{false, true} {
+		service := &fakeService{}
+		cmd := newRootCommand(service)
+		cmd.SetOut(new(bytes.Buffer))
+		cmd.SetErr(new(bytes.Buffer))
+		args := []string{"migrate-state"}
+		if !missing {
+			path := filepath.Join(t.TempDir(), "original.yaml")
+			if err := os.WriteFile(path, []byte("apiVersion: frridge/v1alpha1\nlab:\n  name: test\nrouters:\n  r1: {}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args = append(args, "--file", path)
+		}
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		if missing {
+			if err == nil || service.frridgeArgs != nil {
+				t.Fatalf("missing original file: err=%v args=%v", err, service.frridgeArgs)
+			}
+		} else if err != nil || strings.Join(service.frridgeArgs, "\x00") != strings.Join([]string{"--file", "original.yaml", "migrate-state"}, "\x00") {
+			t.Fatalf("migration forwarding: err=%v args=%v", err, service.frridgeArgs)
+		}
+	}
+}
+
 func TestUpCommandRelativizesTopologyAgainstImplicitHostDir(t *testing.T) {
 	t.Parallel()
 
@@ -209,7 +236,7 @@ func TestTopologyCommandsValidateMissingMountCoverage(t *testing.T) {
 		{source: "inside-via-parent"},
 		{source: "missing-loop", wantError: true},
 	} {
-		for _, command := range []string{"up", "down", "ping", "console"} {
+		for _, command := range []string{"up", "down", "ping", "console", "migrate-state"} {
 			t.Run(command+"/"+tc.source, func(t *testing.T) {
 				t.Parallel()
 				service := &fakeService{}

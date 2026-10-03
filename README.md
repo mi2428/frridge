@@ -84,6 +84,44 @@ $ sudo frridge down -f lab.yaml --purge
 `console` opens `vtysh` by default.
 `down --purge` also removes generated lab files under `lab.workdir`.
 
+### Migrating legacy runtime state
+
+Snapshots without `ownedBridges` require a one-time explicit migration before
+`down` or `up --recreate`, even when the current YAML appears unchanged:
+
+```console
+$ sudo frridge migrate-state --file original.yaml
+$ frridge-mp migrate-state --file original.yaml --repo-dir ./frridge --host-dir ./labs
+```
+
+Use the original topology that created the saved state, including its original
+`pings:` and `lab.workdir`; keep it at the original location or select the existing
+workspace with `FRRIDGE_WORKDIR_OVERRIDE` (Multipass selects its guest-local workspace).
+For Multipass, use the same `--instance` and `--host-dir` as the original lab;
+the wrapper performs its usual VM/binary preparation before guest-side validation.
+Migration requires an exact saved lab name and topology digest match. It atomically
+adds the lab-scoped bridge inventory without changing container IDs, PID/configDir,
+the saved digest, router configuration, or running network objects.
+
+After migration, `down` and `up --recreate` use recorded bridges even if links are
+renamed/removed or only pings change; keep the same lab name and runtime workspace.
+New snapshots record bridge creation attempts, including partial startup, and
+failed cleanup retains state/configuration for retry. Malformed state, foreign
+inventory and mismatched originals fail closed.
+If the matching original YAML is unavailable, migration cannot safely infer old
+bridges: restore the original file rather than using the current YAML or deleting
+the snapshot as a workaround. `console` and `ping` do not require migration.
+
+If a snapshot is missing but lab-labeled containers exist, `down` and
+`up --recreate` refuse to remove or recreate them: labels identify containers, not
+the old owned bridges. `up` without `--recreate` also reports the existing runtime
+conflict. `console --file` and `ping --file` can still find containers by labels;
+this does not authorize network cleanup. A fresh lab with no snapshot or labeled
+containers can still start normally, but unknown leftover bridges are never
+inferred or deleted. A matching original alone cannot migrate missing state:
+select the correct runtime workspace or restore verified snapshot/original
+backups. No automatic recovery is provided when either required input is lost.
+
 ### macOS via Multipass
 
 Use `frridge-mp` when you want to edit topology files on macOS but execute the lab in a Linux VM.

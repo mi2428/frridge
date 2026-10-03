@@ -110,6 +110,24 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	downCmd.Flags().BoolVar(&purge, "purge", false, "Delete persisted router config in addition to runtime state")
 	root.AddCommand(downCmd)
 
+	migrateCmd := &cobra.Command{
+		Use:   "migrate-state",
+		Short: "Record legacy owned bridges using the original guest lab YAML",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(topologyPath) == "" {
+				return fmt.Errorf("migrate-state requires --file with the original lab YAML")
+			}
+			nextReq, guestFile, err := resolveTopology(cmd, req, topologyPath)
+			if err != nil {
+				return err
+			}
+			return service.Frridge(cmd.Context(), nextReq, []string{"--file", guestFile, "migrate-state"})
+		},
+	}
+	migrateCmd.Flags().StringVarP(&topologyPath, "file", "f", "", "Path to original lab YAML below --host-dir")
+	root.AddCommand(migrateCmd)
+
 	consoleCmd := &cobra.Command{
 		Use:   "console <router>",
 		Short: "Open vtysh or a shell inside a running guest-backed router container",

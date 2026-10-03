@@ -35,6 +35,7 @@ type Service interface {
 	Down(ctx context.Context, topologyPath string, opts DownOptions) error
 	Console(ctx context.Context, topologyPath string, router string, opts ConsoleOptions) error
 	Ping(ctx context.Context, topologyPath string, name string) ([]PingResult, error)
+	MigrateState(ctx context.Context, originalTopologyPath string) error
 }
 
 // UpOptions controls how strictly Up reconciles existing generated state.
@@ -132,6 +133,7 @@ func (m *Manager) up(ctx context.Context, topologyPath string, opts UpOptions) (
 		Lab:            topology.Lab.Name,
 		TopologyDigest: digest,
 		Containers:     make(map[string]state.ContainerState, len(topology.Routers)),
+		OwnedBridges:   make(map[string]string),
 	}
 	prepared := make(map[string]frr.PrepareResult, len(topology.Routers))
 	resolvedRouters := topology.ResolveRouters()
@@ -142,6 +144,9 @@ func (m *Manager) up(ctx context.Context, topologyPath string, opts UpOptions) (
 			defer cancel()
 			if cleanupErr := m.cleanupRuntime(cleanupCtx, topology, snapshot, false); cleanupErr != nil {
 				err = errors.Join(err, fmt.Errorf("rollback lab startup: %w", cleanupErr))
+				if writeErr := state.Write(topology.StatePath(), *snapshot); writeErr != nil {
+					err = errors.Join(err, fmt.Errorf("save failed rollback inventory: %w", writeErr))
+				}
 			}
 		}
 	}()
@@ -231,6 +236,39 @@ func (m *Manager) Down(ctx context.Context, topologyPath string, opts DownOption
 	return m.cleanupRuntime(ctx, topology, nil, opts.Purge)
 }
 
+// MigrateState adds an owned bridge inventory using the exact original topology.
+// It changes no Docker, network, container identifier, or router config state.
+func (m *Manager) MigrateState(ctx context.Context, originalTopologyPath string) error {
+	topology, err := config.LoadFile(originalTopologyPath)
+	if err != nil {
+		return err
+	}
+	snapshot, err := readLabState(topology)
+	if err != nil {
+		return err
+	}
+	digest, err := topology.Digest()
+	if err != nil {
+		return err
+	}
+	if snapshot.TopologyDigest != digest {
+		return fmt.Errorf("state migration requires the original topology matching the saved digest")
+	}
+	if snapshot.OwnedBridges != nil {
+		return fmt.Errorf("state already has an owned bridge inventory")
+	}
+	snapshot.OwnedBridges = make(map[string]string)
+	for _, link := range topology.Links {
+		if link.Type == "bridge" {
+			snapshot.OwnedBridges[link.Name] = bridgeLinkName(topology.Lab.Name, link.Name)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return state.Write(topology.StatePath(), *snapshot)
+}
+
 // Console opens either vtysh or /bin/sh inside a running router container.
 func (m *Manager) Console(ctx context.Context, topologyPath, router string, opts ConsoleOptions) error {
 	containerID, err := m.lookupConsoleContainer(ctx, topologyPath, router)
@@ -305,6 +343,8 @@ func (m *Manager) configureLinks(topology *config.Topology, snapshot *state.LabS
 		switch link.Type {
 		case "bridge":
 			bridgeName := bridgeLinkName(topology.Lab.Name, link.Name)
+			// EnsureBridge can create the bridge before failing to configure it.
+			snapshot.OwnedBridges[link.Name] = bridgeName
 			if err := m.network.EnsureBridge(bridgeName, link.MTU); err != nil {
 				return err
 			}
@@ -506,19 +546,26 @@ func (m *Manager) runRouterCommands(ctx context.Context, routers map[string]conf
 	return nil
 }
 
-// cleanupRuntime removes every known container and deterministic host-side
-// link name for a lab so retries start from a clean slate even after a partial
-// failure.
+// cleanupRuntime removes recorded bridges and containers, plus current topology
+// veth names needed for partial-creation rollback. Failed cleanup keeps state.
 func (m *Manager) cleanupRuntime(ctx context.Context, topology *config.Topology, snapshot *state.LabState, purge bool) error {
 	var cleanupErr error
 
 	ids := make(map[string]struct{})
 	if snapshot == nil {
-		if loaded, err := state.Read(topology.StatePath()); err == nil {
-			snapshot = loaded
+		loaded, err := readLabState(topology)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
+		snapshot = loaded
 	}
 	if snapshot != nil {
+		if err := snapshot.Validate(topology.Lab.Name); err != nil {
+			return err
+		}
+		if snapshot.OwnedBridges == nil {
+			return fmt.Errorf("legacy state requires migrate-state --file <original.yaml> before down or up --recreate")
+		}
 		for _, container := range snapshot.Containers {
 			ids[container.ID] = struct{}{}
 		}
@@ -529,8 +576,14 @@ func (m *Manager) cleanupRuntime(ctx context.Context, topology *config.Topology,
 		labelLab:     topology.Lab.Name,
 	})
 	if err != nil {
+		if snapshot == nil {
+			return err
+		}
 		cleanupErr = errors.Join(cleanupErr, err)
 	} else {
+		if snapshot == nil && len(labeledContainers) > 0 {
+			return fmt.Errorf("lab has containers but no state inventory; cannot safely infer owned bridges")
+		}
 		for _, id := range labeledContainers {
 			ids[id] = struct{}{}
 		}
@@ -542,7 +595,11 @@ func (m *Manager) cleanupRuntime(ctx context.Context, topology *config.Topology,
 		}
 	}
 
-	for _, link := range topology.Links {
+	var cleanupLinks []config.Link
+	if snapshot != nil {
+		cleanupLinks = topology.Links
+	}
+	for _, link := range cleanupLinks {
 		switch link.Type {
 		case "bridge":
 			for _, member := range link.Members {
@@ -553,14 +610,18 @@ func (m *Manager) cleanupRuntime(ctx context.Context, topology *config.Topology,
 					cleanupErr = errors.Join(cleanupErr, err)
 				}
 			}
-			if err := m.network.DeleteLink(bridgeLinkName(topology.Lab.Name, link.Name)); err != nil {
-				cleanupErr = errors.Join(cleanupErr, err)
-			}
 		case "p2p":
 			if err := m.network.DeleteLink(p2pTempName(topology.Lab.Name, link.Name, "a")); err != nil {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}
 			if err := m.network.DeleteLink(p2pTempName(topology.Lab.Name, link.Name, "b")); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+			}
+		}
+	}
+	if snapshot != nil {
+		for _, name := range snapshot.OwnedBridges {
+			if err := m.network.DeleteLink(name); err != nil {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}
 		}
@@ -618,10 +679,12 @@ func (m *Manager) lookupConsoleContainer(ctx context.Context, topologyPath, rout
 }
 
 func (m *Manager) lookupRouterContainer(ctx context.Context, topology *config.Topology, router string) (string, error) {
-	if snapshot, err := state.Read(topology.StatePath()); err == nil {
+	if snapshot, err := readLabState(topology); err == nil {
 		if container, ok := snapshot.Containers[router]; ok {
 			return container.ID, nil
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 
 	containers, err := m.docker.ListContainers(ctx, map[string]string{
@@ -639,6 +702,17 @@ func (m *Manager) lookupRouterContainer(ctx context.Context, topology *config.To
 		return "", fmt.Errorf("router %q is ambiguous in lab %q", router, topology.Lab.Name)
 	}
 	return containers[0], nil
+}
+
+func readLabState(topology *config.Topology) (*state.LabState, error) {
+	snapshot, err := state.Read(topology.StatePath())
+	if err != nil {
+		return nil, err
+	}
+	if err := snapshot.Validate(topology.Lab.Name); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 // waitForVTYSH waits until vtysh can see every enabled daemon, which makes
@@ -856,7 +930,7 @@ func shortName(prefix, key string) string {
 }
 
 func bridgeLinkName(labName, linkName string) string {
-	return shortName("frb", labName+"/"+linkName)
+	return state.BridgeName(labName, linkName)
 }
 
 func bridgePortName(labName, linkName, routerName, ifName string) string {

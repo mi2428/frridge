@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,6 +20,9 @@ import (
 
 func TestShortNamesFitLinuxInterfaceLimit(t *testing.T) {
 	t.Parallel()
+	if got, want := bridgeLinkName("fabric", "lan-a"), shortName("frb", "fabric/lan-a"); got != want {
+		t.Fatalf("bridge naming changed from the legacy algorithm: got=%q want=%q", got, want)
+	}
 
 	names := []string{
 		bridgeLinkName("very-long-lab-name", "very-long-link-name"),
@@ -236,8 +240,10 @@ func TestCleanupRuntimePreservesArtifactsOnFailureAndAllowsRetry(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := state.Write(topology.StatePath(), state.LabState{
-					Lab:        topology.Lab.Name,
-					Containers: map[string]state.ContainerState{"r1": {ID: "container-1"}},
+					Lab:            topology.Lab.Name,
+					TopologyDigest: "sha256:" + strings.Repeat("0", 64),
+					Containers:     map[string]state.ContainerState{"r1": {ID: "container-1"}},
+					OwnedBridges:   map[string]string{"lan": bridgeLinkName(topology.Lab.Name, "lan")},
 				}); err != nil {
 					t.Fatal(err)
 				}
@@ -257,6 +263,7 @@ func TestCleanupRuntimePreservesArtifactsOnFailureAndAllowsRetry(t *testing.T) {
 					fakeNetwork.deleteErr = failureErr
 				}
 				manager := NewManager(fakeDocker, fakeNetwork)
+				topology.Links[0].Name = "renamed"
 				if failure != "none" {
 					if err := manager.cleanupRuntime(context.Background(), topology, nil, purge); !errors.Is(err, failureErr) {
 						t.Fatalf("cleanup error = %v, want injected failure", err)
@@ -275,6 +282,9 @@ func TestCleanupRuntimePreservesArtifactsOnFailureAndAllowsRetry(t *testing.T) {
 				fakeDocker.listErr, fakeDocker.removeErr, fakeNetwork.deleteErr = nil, nil, nil
 				if err := manager.cleanupRuntime(context.Background(), topology, nil, purge); err != nil {
 					t.Fatalf("successful cleanup error = %v", err)
+				}
+				if !hasDeletedLink(fakeNetwork, bridgeLinkName(topology.Lab.Name, "lan")) || hasDeletedLink(fakeNetwork, bridgeLinkName(topology.Lab.Name, "renamed")) {
+					t.Fatal("failed-cleanup retry did not retain the original owned bridge")
 				}
 				if _, err := os.Stat(topology.StatePath()); !os.IsNotExist(err) {
 					t.Fatalf("state remains after successful cleanup: %v", err)
@@ -562,6 +572,7 @@ func TestConfigureLinksUsesNetworkManagerForMainNamespace(t *testing.T) {
 		},
 	}
 	snapshot := &state.LabState{
+		OwnedBridges: make(map[string]string),
 		Containers: map[string]state.ContainerState{
 			"r1": {PID: 101},
 			"r2": {PID: 102},
@@ -582,6 +593,9 @@ func TestConfigureLinksUsesNetworkManagerForMainNamespace(t *testing.T) {
 		{"configure-attached-link", "101", p2pTempName("fabric", "core", "a"), "eth2", "198.51.100.0/31", "", "1500"},
 		{"configure-attached-link", "102", p2pTempName("fabric", "core", "b"), "eth2", "198.51.100.1/31", "", "1500"},
 	}, "network ops")
+	if !reflect.DeepEqual(snapshot.OwnedBridges, map[string]string{"lan-a": bridgeLinkName("fabric", "lan-a")}) {
+		t.Fatalf("bridge inventory = %v", snapshot.OwnedBridges)
+	}
 }
 
 func TestConfigureLoopbacksUsesNetworkManager(t *testing.T) {
