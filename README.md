@@ -376,7 +376,7 @@ Variables:
   GIT_REMOTE       Release git remote, defaults to origin
   OS               Release OS list for make dist, defaults to darwin,linux
   ARCH             Release arch list for make dist, defaults to amd64,arm64
-  INSTALL_BINDIR   Install directory, defaults to /Users/teo/.local/bin
+  INSTALL_BINDIR   Install directory, defaults to ~/.local/bin
   MP_NAME          Multipass instance name, defaults to frridge-dev
   VERIFY_LAB       Topology used by make mp-verify, defaults to testdata/smoke/lab.yaml
 
