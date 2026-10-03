@@ -52,6 +52,46 @@ func TestLoadFileValidatesStatePathNames(t *testing.T) {
 	}
 }
 
+func TestLoadFileRequiresSingleYAMLDocument(t *testing.T) {
+	t.Parallel()
+
+	const topologyYAML = "---\napiVersion: frridge/v1alpha1\nlab:\n  name: single-document\nrouters:\n  r1: {}\n"
+	for _, tc := range []struct {
+		name      string
+		trailing  string
+		wantError string
+	}{
+		{name: "single document"},
+		{name: "trailing whitespace and comments", trailing: "\n  \n# trailing comment\n"},
+		{name: "explicit document end", trailing: "...\n# trailing comment\n"},
+		{name: "second topology", trailing: topologyYAML, wantError: "single YAML document"},
+		{name: "second unknown fields", trailing: "---\nunknown: true\n", wantError: "single YAML document"},
+		{name: "empty second document", trailing: "---\n# empty\n", wantError: "single YAML document"},
+		{name: "malformed second document", trailing: "---\n[unterminated\n", wantError: "decode"},
+		{name: "malformed after document end", trailing: "...\nnot-a-document\n", wantError: "decode"},
+		{name: "single document unknown field", trailing: "unknown: true\n", wantError: "decode topology"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "lab.yaml")
+			if err := os.WriteFile(path, []byte(topologyYAML+tc.trailing), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			topology, err := LoadFile(path)
+			if tc.wantError == "" {
+				if err != nil {
+					t.Fatalf("LoadFile() error = %v", err)
+				}
+				if topology.Lab.Name != "single-document" || len(topology.Routers) != 1 {
+					t.Fatalf("LoadFile() changed topology: %+v", topology)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("LoadFile() error = %v, want %q", err, tc.wantError)
+			}
+		})
+	}
+}
+
 func TestLoadFileAppliesDefaultsAndResolvesPaths(t *testing.T) {
 	t.Parallel()
 

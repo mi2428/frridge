@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -266,6 +267,13 @@ func LoadFile(path string) (*Topology, error) {
 	var topology Topology
 	if err := decoder.Decode(&topology); err != nil {
 		return nil, fmt.Errorf("decode topology: %w", err)
+	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return nil, fmt.Errorf("decode trailing topology content: %w", err)
+		}
+		return nil, fmt.Errorf("topology must contain a single YAML document")
 	}
 
 	topology.sourcePath = absPath
