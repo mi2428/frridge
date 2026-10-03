@@ -340,9 +340,6 @@ func (t *Topology) Validate() error {
 				return fmt.Errorf("router %q has an empty command token", name)
 			}
 		}
-		if err := validateLinux(name, router.Linux); err != nil {
-			return err
-		}
 		for _, command := range router.Commands {
 			switch command.Kind {
 			case "shell", "vtysh":
@@ -383,13 +380,17 @@ func (t *Topology) Validate() error {
 			if _, ok := t.Routers[member.Router]; !ok {
 				return fmt.Errorf("link %q references undefined router %q", link.Name, member.Router)
 			}
-			if strings.TrimSpace(member.IfName) == "" {
+			ifName := strings.TrimSpace(member.IfName)
+			if ifName == "" {
 				return fmt.Errorf("link %q has a member with empty ifname", link.Name)
 			}
-			if owner, ok := ifNames[member.Router][member.IfName]; ok {
-				return fmt.Errorf("router %q reuses interface %q across links %q and %q", member.Router, member.IfName, owner, link.Name)
+			if ifName == "lo" {
+				return fmt.Errorf("link %q router %q cannot replace loopback interface lo", link.Name, member.Router)
 			}
-			ifNames[member.Router][member.IfName] = link.Name
+			if owner, ok := ifNames[member.Router][ifName]; ok {
+				return fmt.Errorf("router %q reuses interface %q across links %q and %q", member.Router, ifName, owner, link.Name)
+			}
+			ifNames[member.Router][ifName] = link.Name
 
 			if member.IPv4 != "" {
 				if _, _, err := net.ParseCIDR(member.IPv4); err != nil {
@@ -401,6 +402,12 @@ func (t *Topology) Validate() error {
 					return fmt.Errorf("link %q member %s/%s has invalid mac %q: %w", link.Name, member.Router, member.IfName, member.MAC, err)
 				}
 			}
+		}
+	}
+
+	for name, router := range t.Routers {
+		if err := validateLinux(name, router.Linux, ifNames[name]); err != nil {
+			return err
 		}
 	}
 
@@ -587,8 +594,11 @@ func (t *Topology) Digest() (string, error) {
 	return fmt.Sprintf("sha256:%x", sum[:]), nil
 }
 
-func validateLinux(routerName string, linux Linux) error {
-	createdDevices := make(map[string]string)
+func validateLinux(routerName string, linux Linux, linkDevices map[string]string) error {
+	createdDevices := map[string]string{"lo": "loopback"}
+	for name, link := range linkDevices {
+		createdDevices[name] = fmt.Sprintf("link %q", link)
+	}
 	namespaceNames := make(map[string]string)
 	masterAssignments := make(map[string]linuxMasterAssignment)
 	interfaceNames := make(map[string]struct{}, len(linux.Interfaces))
@@ -660,9 +670,6 @@ func validateLinux(routerName string, linux Linux) error {
 		}
 		if veth.Name == veth.Peer {
 			return fmt.Errorf("router %q veth %q reuses the same name for both ends", routerName, veth.Name)
-		}
-		if err := claimLinuxDevice(routerName, createdDevices, veth.Name, "veth"); err != nil {
-			return err
 		}
 		if _, ok := vethPeerNames[veth.Peer]; ok {
 			return fmt.Errorf("router %q reuses veth peer name %q", routerName, veth.Peer)
@@ -747,6 +754,20 @@ func validateLinux(routerName string, linux Linux) error {
 		}
 	}
 
+	// Runtime creates veths after bridges and moves namespace peers before the
+	// next pair, freeing those peer names in the router namespace.
+	for _, veth := range linux.Veths {
+		if err := claimLinuxDevice(routerName, createdDevices, veth.Name, "veth"); err != nil {
+			return err
+		}
+		if err := claimLinuxDevice(routerName, createdDevices, veth.Peer, "veth peer"); err != nil {
+			return err
+		}
+		if veth.Namespace != nil {
+			delete(createdDevices, strings.TrimSpace(veth.Peer))
+		}
+	}
+
 	return nil
 }
 
@@ -812,6 +833,9 @@ func validateLinuxNamespace(routerName, owner string, namespace Namespace, names
 	namespaceNames[namespace.Name] = owner
 	if strings.TrimSpace(namespace.IfName) == "" {
 		return fmt.Errorf("router %q %s namespace %q has empty ifname", routerName, owner, namespace.Name)
+	}
+	if namespace.IfName == "lo" {
+		return fmt.Errorf("router %q %s namespace %q cannot replace loopback interface lo", routerName, owner, namespace.Name)
 	}
 	if err := validateLinuxLinkAttrs(routerName, fmt.Sprintf("%s namespace %q", owner, namespace.Name), namespace.MAC, "", namespace.Addresses); err != nil {
 		return err

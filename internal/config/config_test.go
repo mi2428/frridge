@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadFileValidatesStatePathNames(t *testing.T) {
@@ -189,6 +191,75 @@ func TestValidateRejectsDuplicateInterfacesAcrossLinks(t *testing.T) {
 	err := topology.Validate()
 	if err == nil || !strings.Contains(err.Error(), `router "r1" reuses interface "eth1"`) {
 		t.Fatalf("Validate() error = %v, want duplicate interface error", err)
+	}
+}
+
+func TestLoadFileValidatesLinuxDeviceCollisions(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		linux     Linux
+		linkName  string
+		wantError string
+	}{
+		{name: "link vs vrf", linux: Linux{VRFs: []VRF{{Name: "eth1", Table: 100}}}, wantError: `device name "eth1"`},
+		{name: "link vs bond", linux: Linux{Bonds: []Bond{{Name: "eth1", Mode: "active-backup"}}}, wantError: `device name "eth1"`},
+		{name: "link vs bridge", linux: Linux{Bridges: []Bridge{{Name: "eth1"}}}, wantError: `device name "eth1"`},
+		{name: "link vs vxlan", linux: Linux{Bridges: []Bridge{{Name: "br0", VXLANS: []VXLAN{{Name: "eth1", VNI: 100}}}}}, wantError: `device name "eth1"`},
+		{name: "link vs veth", linux: Linux{Veths: []Veth{{Name: "eth1", Peer: "host0"}}}, wantError: `device name "eth1"`},
+		{name: "trimmed link vs veth", linkName: " eth1 ", linux: Linux{Veths: []Veth{{Name: "eth1", Peer: "host0"}}}, wantError: `device name "eth1"`},
+		{name: "link vs peer", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "eth1"}}}, wantError: `device name "eth1"`},
+		{name: "link vs moved peer", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "eth1", Namespace: &Namespace{Name: "host", IfName: "eth0"}}}}, wantError: `device name "eth1"`},
+		{name: "bridge vs peer", linux: Linux{Bridges: []Bridge{{Name: "host0"}}, Veths: []Veth{{Name: "lan0", Peer: "host0"}}}, wantError: `device name "host0"`},
+		{name: "peer vs later device", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "host0"}, {Name: "host0", Peer: "host1"}}}, wantError: `device name "host0"`},
+		{name: "device vs later peer", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "host0"}, {Name: "lan1", Peer: "lan0"}}}, wantError: `device name "lan0"`},
+		{name: "loopback link", linkName: "lo", wantError: "loopback"},
+		{name: "trimmed loopback link", linkName: " lo ", wantError: "loopback"},
+		{name: "loopback device", linux: Linux{Veths: []Veth{{Name: "lo", Peer: "host0"}}}, wantError: `device name "lo"`},
+		{name: "loopback peer", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "lo"}}}, wantError: `device name "lo"`},
+		{name: "namespace loopback", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "host0", Namespace: &Namespace{Name: "host", IfName: "lo"}}}}, wantError: "loopback"},
+		{name: "configure existing interfaces", linux: Linux{Interfaces: []Interface{{Name: "eth1"}, {Name: "lo"}}}},
+		{name: "configure trimmed link", linkName: " eth1 ", linux: Linux{Interfaces: []Interface{{Name: "eth1"}}}},
+		{name: "bond attachment", linux: Linux{Bonds: []Bond{{Name: "bond0", Mode: "active-backup", Interfaces: []string{"eth1"}}}}},
+		{name: "bridge attachment", linux: Linux{Bridges: []Bridge{{Name: "br0", Interfaces: []string{"eth1"}}}}},
+		{name: "same name in another namespace", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "host0", Namespace: &Namespace{Name: "host", IfName: "eth1"}}}}},
+		{name: "reuse moved peer name", linux: Linux{Veths: []Veth{{Name: "lan0", Peer: "host0", Namespace: &Namespace{Name: "host", IfName: "eth0"}}, {Name: "host0", Peer: "host1"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ifName := tc.linkName
+			if ifName == "" {
+				ifName = "eth1"
+			}
+			topology := Topology{
+				APIVersion: APIVersion,
+				Lab:        Lab{Name: "device-collisions"},
+				Routers: map[string]Router{
+					"r1": {Linux: tc.linux},
+					"r2": {Linux: Linux{VRFs: []VRF{{Name: "eth1", Table: 100}}}},
+				},
+				Links: []Link{{Name: "l1", Type: "p2p", Members: []LinkMember{
+					{Router: "r1", IfName: ifName}, {Router: "r2", IfName: "eth2"},
+				}}},
+			}
+			data, err := yaml.Marshal(topology)
+			if err != nil {
+				t.Fatalf("Marshal() error = %v", err)
+			}
+			path := filepath.Join(t.TempDir(), "lab.yaml")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			_, err = LoadFile(path)
+			if tc.wantError == "" {
+				if err != nil {
+					t.Fatalf("LoadFile() error = %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("LoadFile() error = %v, want %q", err, tc.wantError)
+			}
+		})
 	}
 }
 
