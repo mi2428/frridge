@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,6 +167,78 @@ links:
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "outside --host-dir") {
 		t.Fatalf("Execute() error = %v, want symlink host-dir coverage failure", err)
+	}
+}
+
+func TestTopologyCommandsValidateMissingMountCoverage(t *testing.T) {
+	t.Parallel()
+
+	hostDir := t.TempDir()
+	insideDir := filepath.Join(hostDir, "inside")
+	if err := os.Mkdir(insideDir, 0o755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	outsideDir := t.TempDir()
+	for name, target := range map[string]string{
+		"inside-link":            insideDir,
+		"outside-link":           outsideDir,
+		"dangling-link":          filepath.Join(outsideDir, "missing"),
+		"dangling-internal-link": filepath.Join(insideDir, "missing"),
+		"outside-via-parent":     filepath.Join(hostDir, "outside-link") + "/../missing",
+		"inside-via-parent":      "inside/missing/../leaf",
+		"missing-loop":           "missing/../missing-loop",
+	} {
+		if err := os.Symlink(target, filepath.Join(hostDir, name)); err != nil {
+			t.Fatalf("Symlink() error = %v", err)
+		}
+	}
+
+	for _, tc := range []struct {
+		source    string
+		wantError bool
+	}{
+		{source: "inside"},
+		{source: "inside-link"},
+		{source: "missing"},
+		{source: "inside-link/missing/deep"},
+		{source: "outside-link", wantError: true},
+		{source: "outside-link/missing/deep", wantError: true},
+		{source: "dangling-link", wantError: true},
+		{source: "dangling-internal-link"},
+		{source: "outside-via-parent", wantError: true},
+		{source: "inside-via-parent"},
+		{source: "missing-loop", wantError: true},
+	} {
+		for _, command := range []string{"up", "down", "ping", "console"} {
+			t.Run(command+"/"+tc.source, func(t *testing.T) {
+				t.Parallel()
+				service := &fakeService{}
+				cmd := newRootCommand(service)
+				cmd.SetOut(new(bytes.Buffer))
+				cmd.SetErr(new(bytes.Buffer))
+				topologyPath := filepath.Join(hostDir, command+"-"+strings.ReplaceAll(tc.source, "/", "-")+".yaml")
+				data := fmt.Sprintf("apiVersion: frridge/v1alpha1\nlab:\n  name: test\nrouters:\n  r1:\n    mounts:\n      - source: %q\n        target: /lab\n", tc.source)
+				if err := os.WriteFile(topologyPath, []byte(data), 0o644); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+				args := []string{command, "--file", topologyPath}
+				if command == "console" {
+					args = append(args, "r1")
+				}
+				cmd.SetArgs(args)
+				err := cmd.Execute()
+				if tc.wantError {
+					if err == nil || !strings.Contains(err.Error(), "--host-dir") {
+						t.Fatalf("Execute() error = %v, want host-dir coverage failure", err)
+					}
+					if service.frridgeArgs != nil {
+						t.Fatal("Execute() called service before validating mount coverage")
+					}
+				} else if err != nil || service.frridgeArgs == nil {
+					t.Fatalf("Execute() error = %v, args = %v, want guest command", err, service.frridgeArgs)
+				}
+			})
+		}
 	}
 }
 

@@ -235,7 +235,7 @@ func validateHostDirCoverage(topologyPath, hostDir string) error {
 	for _, router := range topology.ResolveRouters() {
 		for _, mount := range router.Mounts {
 			if err := ensureBelowHostDir(hostDir, mount.Source); err != nil {
-				return fmt.Errorf("router %q mount source %q is outside --host-dir %q", router.Name, mount.Source, hostDir)
+				return fmt.Errorf("router %q mount source %q failed --host-dir %q coverage: %w", router.Name, mount.Source, hostDir, err)
 			}
 		}
 	}
@@ -256,7 +256,7 @@ func ensureBelowHostDir(hostDir, candidate string) error {
 		return err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%q is outside %q", resolvedCandidate, resolvedHostDir)
+		return fmt.Errorf("%q is outside --host-dir %q", resolvedCandidate, resolvedHostDir)
 	}
 	return nil
 }
@@ -271,7 +271,44 @@ func resolvedCoveragePath(path string) (string, error) {
 	case err == nil:
 		return resolved, nil
 	case os.IsNotExist(err):
-		return abs, nil
+		// Preserve missing sources for commands such as down, resolving every
+		// existing symlink before deciding whether the path is covered.
+		parts := strings.Split(abs, string(filepath.Separator))
+		resolved = string(filepath.Separator)
+		links := 0
+		for len(parts) > 0 {
+			part := parts[0]
+			parts = parts[1:]
+			switch part {
+			case "", ".":
+				continue
+			case "..":
+				resolved = filepath.Dir(resolved)
+				continue
+			}
+			next := filepath.Join(resolved, part)
+			info, err := os.Lstat(next)
+			if err != nil && !os.IsNotExist(err) {
+				return "", err
+			}
+			if err == nil && info.Mode()&os.ModeSymlink != 0 {
+				links++
+				if links > 255 {
+					return "", fmt.Errorf("resolve %q: too many symlinks", abs)
+				}
+				target, err := os.Readlink(next)
+				if err != nil {
+					return "", err
+				}
+				if filepath.IsAbs(target) {
+					resolved = string(filepath.Separator)
+				}
+				parts = append(strings.Split(target, string(filepath.Separator)), parts...)
+				continue
+			}
+			resolved = next
+		}
+		return resolved, nil
 	default:
 		return "", err
 	}
