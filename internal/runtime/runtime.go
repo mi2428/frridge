@@ -553,8 +553,11 @@ func (m *Manager) cleanupRuntime(ctx context.Context, topology *config.Topology,
 		}
 	}
 
+	if cleanupErr != nil {
+		return cleanupErr
+	}
 	if err := state.Remove(topology.StatePath()); err != nil {
-		cleanupErr = errors.Join(cleanupErr, err)
+		return err
 	}
 
 	if purge {

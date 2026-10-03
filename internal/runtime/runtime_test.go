@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,13 +34,17 @@ func TestShortNamesFitLinuxInterfaceLimit(t *testing.T) {
 }
 
 type fakeDockerClient struct {
-	daemons []string
-	execs   [][]string
-	execFn  func(context.Context, string, []string) (docker.ExecResult, error)
+	daemons   []string
+	execs     [][]string
+	execFn    func(context.Context, string, []string) (docker.ExecResult, error)
+	listErr   error
+	removeErr error
+	removed   []string
 }
 
 type fakeNetworkManager struct {
-	ops [][]string
+	ops       [][]string
+	deleteErr error
 }
 
 func (f *fakeDockerClient) CreateContainer(context.Context, docker.ContainerSpec) (string, error) {
@@ -54,11 +60,12 @@ func (f *fakeDockerClient) InspectContainer(context.Context, string) (docker.Ins
 }
 
 func (f *fakeDockerClient) ListContainers(context.Context, map[string]string) ([]string, error) {
-	return nil, nil
+	return nil, f.listErr
 }
 
-func (f *fakeDockerClient) RemoveContainer(context.Context, string) error {
-	return nil
+func (f *fakeDockerClient) RemoveContainer(_ context.Context, id string) error {
+	f.removed = append(f.removed, id)
+	return f.removeErr
 }
 
 func (f *fakeDockerClient) Exec(ctx context.Context, containerID string, cmd []string) (docker.ExecResult, error) {
@@ -188,7 +195,76 @@ func (f *fakeNetworkManager) ConfigureRoute(pid int, route config.Route) error {
 
 func (f *fakeNetworkManager) DeleteLink(name string) error {
 	f.record("delete-link", name)
-	return nil
+	return f.deleteErr
+}
+
+func TestCleanupRuntimePreservesArtifactsOnFailureAndAllowsRetry(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"list", "remove", "network", "none"} {
+		for _, purge := range []bool{false, true} {
+			t.Run(failure+"/purge="+strconv.FormatBool(purge), func(t *testing.T) {
+				topology := &config.Topology{
+					Lab:   config.Lab{Name: "cleanup", WorkDir: t.TempDir()},
+					Links: []config.Link{{Name: "lan", Type: "bridge"}},
+				}
+				configPath := filepath.Join(topology.RouterDir("r1"), "frr.conf")
+				if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(configPath, []byte("hostname r1\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := state.Write(topology.StatePath(), state.LabState{
+					Lab:        topology.Lab.Name,
+					Containers: map[string]state.ContainerState{"r1": {ID: "container-1"}},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				before, err := os.ReadFile(topology.StatePath())
+				if err != nil {
+					t.Fatal(err)
+				}
+				failureErr := errors.New("injected cleanup failure")
+				fakeDocker := &fakeDockerClient{}
+				fakeNetwork := &fakeNetworkManager{}
+				switch failure {
+				case "list":
+					fakeDocker.listErr = failureErr
+				case "remove":
+					fakeDocker.removeErr = failureErr
+				case "network":
+					fakeNetwork.deleteErr = failureErr
+				}
+				manager := NewManager(fakeDocker, fakeNetwork)
+				if failure != "none" {
+					if err := manager.cleanupRuntime(context.Background(), topology, nil, purge); !errors.Is(err, failureErr) {
+						t.Fatalf("cleanup error = %v, want injected failure", err)
+					}
+					after, err := os.ReadFile(topology.StatePath())
+					if err != nil || string(after) != string(before) {
+						t.Fatalf("snapshot changed after failure: %q, %v", after, err)
+					}
+					if data, err := os.ReadFile(configPath); err != nil || string(data) != "hostname r1\n" {
+						t.Fatalf("configuration changed after failure: %q, %v", data, err)
+					}
+					if len(fakeDocker.removed) == 0 || len(fakeNetwork.ops) == 0 {
+						t.Fatal("cleanup did not continue attempting both resource types")
+					}
+				}
+				fakeDocker.listErr, fakeDocker.removeErr, fakeNetwork.deleteErr = nil, nil, nil
+				if err := manager.cleanupRuntime(context.Background(), topology, nil, purge); err != nil {
+					t.Fatalf("successful cleanup error = %v", err)
+				}
+				if _, err := os.Stat(topology.StatePath()); !os.IsNotExist(err) {
+					t.Fatalf("state remains after successful cleanup: %v", err)
+				}
+				_, err = os.Stat(configPath)
+				if (purge && !os.IsNotExist(err)) || (!purge && err != nil) {
+					t.Fatalf("configuration after purge=%t: %v", purge, err)
+				}
+			})
+		}
+	}
 }
 
 func TestRenderVTYSHAppendsWriteMemory(t *testing.T) {
