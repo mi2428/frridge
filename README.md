@@ -26,11 +26,17 @@ already contains FRR and `vtysh`.
 > Prebuilt tarballs are also available from GitHub Releases for macOS and Linux, with amd64 and arm64 builds for each platform.
 > Each archive contains `frridge`, `frridge-mp`, this README, and `LICENSE`.
 > Use `frridge` on a Linux host, or `frridge-mp` on macOS when you want to run the lab inside Multipass.
+> For `frridge-mp` lab commands, install Multipass and obtain a source checkout, then pass it with `--repo-dir`.
+> On a cold guest-binary cache (or after source changes), host Go must satisfy the checkout's `go.mod` requirement (currently Go 1.26.3).
+> The archive prebuilds the host CLIs, not the Linux guest `frridge` binary: host `go build` compiles that binary from the checkout on demand.
+> `--help` and `--version` work without a checkout or VM; they do not verify a working lab installation.
 >
 > ```console
 > $ curl -L -o frridge.tar.gz https://github.com/mi2428/frridge/releases/download/v0.1.0/frridge-v0.1.0-darwin-arm64.tar.gz
 > $ tar -xzf ./frridge.tar.gz
 > $ chmod +x ./frridge-v0.1.0-darwin-arm64/frridge-mp
+> $ git clone https://github.com/mi2428/frridge.git "$HOME/frridge"
+> $ ./frridge-v0.1.0-darwin-arm64/frridge-mp --repo-dir "$HOME/frridge" --host-dir "$HOME/frridge" shell
 > ```
 
 ## Usage
@@ -80,6 +86,7 @@ $ sudo frridge down -f lab.yaml --purge
 ### macOS via Multipass
 
 Use `frridge-mp` when you want to edit topology files on macOS but execute the lab in a Linux VM.
+Install Multipass and keep a source checkout available; a cold guest-binary cache also needs host Go as described in Installation.
 
 ```console
 $ frridge-mp --help
@@ -113,7 +120,7 @@ Flags:
 Use "frridge-mp [command] --help" for more information about a command.
 ```
 
-Every `frridge-mp` command auto-creates or updates the guest VM, mounts the requested host directory, and refreshes the guest-local `frridge` binary as needed.
+`frridge-mp` lab commands auto-create or update the guest VM, mount the requested host directory, and refresh the guest-local `frridge` binary as needed.
 
 When the repo contains a companion `Dockerfile`, `frridge-mp` first tries to reuse host-side Docker cache by building and exporting the image on macOS, then imports that archive into the guest.
 If host Docker is unavailable, it falls back to building the image inside the guest VM.
