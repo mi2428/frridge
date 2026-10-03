@@ -286,6 +286,9 @@ func (t *Topology) Validate() error {
 	if strings.TrimSpace(t.Lab.Name) == "" {
 		return fmt.Errorf("lab.name is required")
 	}
+	if !isPathComponent(t.Lab.Name) {
+		return fmt.Errorf("lab.name %q must be a single non-special path component", t.Lab.Name)
+	}
 	if len(t.Routers) == 0 {
 		return fmt.Errorf("at least one router is required")
 	}
@@ -297,6 +300,9 @@ func (t *Topology) Validate() error {
 	for name, router := range t.Routers {
 		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("router name must not be empty")
+		}
+		if !isPathComponent(name) {
+			return fmt.Errorf("router name %q must be a single non-special path component", name)
 		}
 
 		if _, ok := ifNames[name]; !ok {
@@ -422,6 +428,10 @@ func (t *Topology) Validate() error {
 	}
 
 	return nil
+}
+
+func isPathComponent(name string) bool {
+	return name != "." && name != ".." && filepath.Base(name) == name && !strings.ContainsRune(name, '\x00')
 }
 
 // ResolveRouter merges lab defaults into one router and resolves relative

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -8,6 +9,46 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestLoadFileValidatesStatePathNames(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"", " ", ".", "..", "../escape", "nested/name", "/absolute", "trailing/", "nul\x00name", "lab-1_r.2", "with spaces", "名前", `a\b`, "..safe", "a:b"} {
+		valid := name == "lab-1_r.2" || name == "with spaces" || name == "名前" || name == `a\b` || name == "..safe" || name == "a:b"
+		for _, field := range []string{"lab", "router"} {
+			t.Run(fmt.Sprintf("%s/%q", field, name), func(t *testing.T) {
+				t.Parallel()
+				labName, routerName := "safe-lab", "r1"
+				if field == "lab" {
+					labName = name
+				} else {
+					routerName = name
+				}
+				path := filepath.Join(t.TempDir(), "lab.yaml")
+				data := fmt.Sprintf("apiVersion: frridge/v1alpha1\nlab:\n  name: %q\nrouters:\n  %q: {}\n", labName, routerName)
+				if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+				topology, err := LoadFile(path)
+				if !valid {
+					if err == nil {
+						t.Fatal("LoadFile() error = nil, want invalid state path name")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("LoadFile() error = %v", err)
+				}
+				if got, want := topology.LabDir(), filepath.Join(topology.WorkDirPath(), "labs", labName); got != want {
+					t.Fatalf("LabDir() = %q, want %q", got, want)
+				}
+				if got, want := topology.RouterDir(routerName), filepath.Join(topology.LabDir(), "routers", routerName); got != want {
+					t.Fatalf("RouterDir() = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
 
 func TestLoadFileAppliesDefaultsAndResolvesPaths(t *testing.T) {
 	t.Parallel()
