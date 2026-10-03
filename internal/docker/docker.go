@@ -169,10 +169,12 @@ func (c *sdkClient) Exec(ctx context.Context, id string, cmd []string) (ExecResu
 		return ExecResult{}, fmt.Errorf("docker exec attach failed: %w", err)
 	}
 	defer attach.Close()
+	stopClose := context.AfterFunc(ctx, attach.Close)
+	defer stopClose()
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if err := copyExecOutput(&stdout, &stderr, attach.Reader, false); err != nil {
+	if err := copyExecOutput(ctx, &stdout, &stderr, attach.Reader, false); err != nil {
 		return ExecResult{}, fmt.Errorf("docker exec output copy failed: %w", err)
 	}
 
@@ -189,6 +191,9 @@ func (c *sdkClient) Exec(ctx context.Context, id string, cmd []string) (ExecResu
 }
 
 func (c *sdkClient) ExecInteractive(ctx context.Context, id string, cmd []string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	stdinTTY := term.IsTerminal(int(os.Stdin.Fd()))
 	// Docker only needs a TTY on the container side. Keeping TTY enabled when
 	// stdout is interactive but stdin is piped makes console wrappers such as
@@ -207,6 +212,8 @@ func (c *sdkClient) ExecInteractive(ctx context.Context, id string, cmd []string
 		return fmt.Errorf("docker exec attach failed: %w", err)
 	}
 	defer attach.Close()
+	stopClose := context.AfterFunc(ctx, attach.Close)
+	defer stopClose()
 
 	if tty && stdinTTY {
 		restore, err := makeRawTerminal()
@@ -225,7 +232,7 @@ func (c *sdkClient) ExecInteractive(ctx context.Context, id string, cmd []string
 		_ = attach.CloseWrite()
 	}()
 
-	if err := copyExecOutput(os.Stdout, os.Stderr, attach.Reader, tty); err != nil {
+	if err := copyExecOutput(ctx, os.Stdout, os.Stderr, attach.Reader, tty); err != nil {
 		return fmt.Errorf("docker exec output copy failed: %w", err)
 	}
 
@@ -303,7 +310,7 @@ func (c *sdkClient) attachResize(ctx context.Context, execID string) error {
 			case <-signals:
 				width, height, err := term.GetSize(int(os.Stdout.Fd()))
 				if err == nil {
-					_ = c.api.ContainerExecResize(context.Background(), execID, containerapi.ResizeOptions{
+					_ = c.api.ContainerExecResize(ctx, execID, containerapi.ResizeOptions{
 						Width:  uint(width),
 						Height: uint(height),
 					})
@@ -315,12 +322,16 @@ func (c *sdkClient) attachResize(ctx context.Context, execID string) error {
 	return nil
 }
 
-func copyExecOutput(stdout io.Writer, stderr io.Writer, src io.Reader, tty bool) error {
+func copyExecOutput(ctx context.Context, stdout io.Writer, stderr io.Writer, src io.Reader, tty bool) error {
+	var err error
 	if tty {
-		_, err := io.Copy(stdout, src)
-		return normalizeCopyError(err)
+		_, err = io.Copy(stdout, src)
+	} else {
+		_, err = stdcopy.StdCopy(stdout, stderr, src)
 	}
-	_, err := stdcopy.StdCopy(stdout, stderr, src)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return normalizeCopyError(err)
 }
 
