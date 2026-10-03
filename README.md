@@ -448,6 +448,31 @@ Examples:
   make release TAG=v0.1.0                     # Publish a GitHub release from local dist artifacts
 ```
 
+### Isolated Linux dataplane regression tests
+
+Ordinary `make test` skips these tests unless explicitly enabled. In a disposable
+Linux VM, as root, run from the repository root:
+
+```sh
+FRRIDGE_RUN_INTEGRATION=1 go test ./internal/netlink -run '^TestLinuxDataplane$' -count=1 -timeout=60s -v
+```
+
+Prerequisites: the Go version in `go.mod`, `sleep` (coreutils), a mounted `/proc`,
+`CAP_SYS_ADMIN` and `CAP_NET_ADMIN`, and kernel support for network namespaces,
+veth, bridges, VRF, bonding, VXLAN and IPv6. No Docker, FRR or named lab is used.
+On Ubuntu, VRF support may require the `linux-modules-extra` package matching the running kernel.
+Non-Linux, non-root and missing namespace privileges explicitly skip; once
+enabled with those privileges, kernel-operation and assertion failures fail.
+
+The test re-executes in a fresh anonymous network namespace and checks that it
+differs from the original namespace before opening any netlink socket. Peer
+processes also have temporary namespaces; random interface names and exact-name
+cleanup never sweep existing lab resources. Three bounded cases inspect native
+kernel placement, MTU/MAC/up state, bridge/VRF/bond masters, VXLAN attributes,
+dual-stack addresses/routes, and explicit cleanup after partial creation. The
+isolated process has a 45-second bound; cleanup kills/reaps peers and closes
+namespace handles. This does not test runtime/Docker rollback or packet delivery.
+
 ## License
 
 MIT.
