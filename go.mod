@@ -1,6 +1,6 @@
 module frridge
 
-go 1.26.3
+go 1.26.8
 
 require (
 	github.com/docker/docker v28.5.2+incompatible

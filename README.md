@@ -27,7 +27,8 @@ already contains FRR and `vtysh`.
 > Each archive contains `frridge`, `frridge-mp`, this README, and `LICENSE`.
 > Use `frridge` on a Linux host, or `frridge-mp` on macOS when you want to run the lab inside Multipass.
 > For `frridge-mp` lab commands, install Multipass and obtain a source checkout, then pass it with `--repo-dir`.
-> On a cold guest-binary cache (or after source changes), host Go must satisfy the checkout's `go.mod` requirement (currently Go 1.26.3).
+> On a cold guest-binary cache (or after source changes), host Go must satisfy the checkout's `go.mod` requirement (currently Go 1.26.8).
+> Offline builds need that toolchain or a newer supported version installed in advance; older toolchains may otherwise need an automatic download.
 > The archive prebuilds the host CLIs, not the Linux guest `frridge` binary: host `go build` compiles that binary from the checkout on demand.
 > `--help` and `--version` work without a checkout or VM; they do not verify a working lab installation.
 >
