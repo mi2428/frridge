@@ -374,7 +374,7 @@ func (t *Topology) Validate() error {
 		default:
 			return fmt.Errorf("link %q has unsupported type %q", link.Name, link.Type)
 		}
-		if link.MTU < 0 {
+		if link.MTU < 0 || uint64(link.MTU) > 1<<32-1 {
 			return fmt.Errorf("link %q has invalid mtu %d", link.Name, link.MTU)
 		}
 		if link.Type == "bridge" && len(link.Members) < 2 {
@@ -616,7 +616,7 @@ func validateLinux(routerName string, linux Linux, linkDevices map[string]string
 		if strings.TrimSpace(vrf.Name) == "" {
 			return fmt.Errorf("router %q has a vrf with empty name", routerName)
 		}
-		if vrf.Table <= 0 {
+		if vrf.Table <= 0 || uint64(vrf.Table) > 1<<32-1 {
 			return fmt.Errorf("router %q vrf %q has invalid table %d", routerName, vrf.Name, vrf.Table)
 		}
 		if err := claimLinuxDevice(routerName, createdDevices, vrf.Name, "vrf"); err != nil {

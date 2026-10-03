@@ -520,6 +520,82 @@ func TestValidateAcceptsLinuxDataplaneConfig(t *testing.T) {
 	}
 }
 
+func TestLoadFileValidatesVRFTableRange(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		table int
+		valid bool
+	}{
+		{table: 0},
+		{table: -1},
+		{table: 1100, valid: true},
+		{table: 1<<32 - 1, valid: true},
+		{table: 1 << 32},
+	} {
+		t.Run(fmt.Sprint(tc.table), func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "lab.yaml")
+			data := fmt.Sprintf("apiVersion: frridge/v1alpha1\nlab:\n  name: vrf-table\nrouters:\n  r1:\n    linux:\n      vrfs:\n        - name: tenant\n          table: %d\n", tc.table)
+			if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			topology, err := LoadFile(path)
+			if !tc.valid {
+				if err == nil || !strings.Contains(err.Error(), fmt.Sprintf(`vrf "tenant" has invalid table %d`, tc.table)) {
+					t.Fatalf("LoadFile() error = %v, want invalid table %d", err, tc.table)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LoadFile() error = %v", err)
+			}
+			if got := topology.ResolveRouter("r1").Linux.VRFs[0].Table; got != tc.table {
+				t.Fatalf("resolved VRF table = %d, want %d", got, tc.table)
+			}
+		})
+	}
+}
+
+func TestLoadFileValidatesMTURange(t *testing.T) {
+	t.Parallel()
+
+	for _, linkType := range []string{"p2p", "bridge"} {
+		for _, tc := range []struct {
+			mtu   int
+			valid bool
+		}{
+			{mtu: 0, valid: true},
+			{mtu: -1},
+			{mtu: 1500, valid: true},
+			{mtu: 1<<32 - 1, valid: true},
+			{mtu: 1 << 32},
+		} {
+			t.Run(fmt.Sprintf("%s/%d", linkType, tc.mtu), func(t *testing.T) {
+				t.Parallel()
+				path := filepath.Join(t.TempDir(), "lab.yaml")
+				data := fmt.Sprintf("apiVersion: frridge/v1alpha1\nlab:\n  name: mtu-range\nrouters:\n  r1: {}\nlinks:\n  - name: l1\n    type: %s\n    mtu: %d\n    members:\n      - {router: r1, ifname: eth1}\n      - {router: r1, ifname: eth2}\n", linkType, tc.mtu)
+				if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+				topology, err := LoadFile(path)
+				if !tc.valid {
+					if err == nil || !strings.Contains(err.Error(), fmt.Sprintf(`link "l1" has invalid mtu %d`, tc.mtu)) {
+						t.Fatalf("LoadFile() error = %v, want invalid mtu %d", err, tc.mtu)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("LoadFile() error = %v", err)
+				}
+				if got := topology.Links[0].MTU; got != tc.mtu {
+					t.Fatalf("link MTU = %d, want %d", got, tc.mtu)
+				}
+			})
+		}
+	}
+}
+
 func TestValidateRejectsDuplicateLinuxDataplaneInterfaceAttachment(t *testing.T) {
 	t.Parallel()
 
