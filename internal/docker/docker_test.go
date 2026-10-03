@@ -235,9 +235,7 @@ func (c *watchedContext) AfterFunc(f func()) func() bool {
 func TestExecNormalCompletionStopsWatcherAndPreservesOutput(t *testing.T) {
 	t.Parallel()
 	c, _ := execMock(t, false, false, 7)
-	parent, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ctx := &watchedContext{Context: parent}
+	ctx := &watchedContext{Context: t.Context()}
 	result, err := c.Exec(ctx, "container-1", []string{"sh"})
 	if err != nil || result.Stdout != "hello\n" || result.Stderr != "boom\n" || result.ExitCode != 7 {
 		t.Fatalf("exec result = %+v, error = %v", result, err)
