@@ -300,27 +300,28 @@ func shellJoin(args []string) string {
 	return strings.Join(quoted, " ")
 }
 
-func stripOutputBanner(output string, markers shellMarkers) string {
-	_, rest, ok := strings.Cut(output, markers.output+"\n")
-	if ok {
-		return rest
-	}
-	return output
-}
-
 func parseShellOutput(output string, markers shellMarkers) (string, int, error) {
-	output = stripOutputBanner(output, markers)
+	_, output, ok := strings.Cut(output, markers.output+"\n")
+	if !ok {
+		return "", 0, errors.New("parse multipass shell output: missing output marker")
+	}
 	index := strings.LastIndex(output, markers.status)
 	if index == -1 {
-		return output, 0, nil
+		return "", 0, errors.New("parse multipass shell output: missing status marker")
 	}
 
 	content := output[:index]
 	statusText := output[index+len(markers.status):]
-	statusText = strings.TrimSpace(statusText)
+	if !strings.HasSuffix(statusText, "\n") {
+		return "", 0, errors.New("parse multipass shell output: truncated exit status")
+	}
+	statusText = strings.TrimSuffix(statusText, "\n")
 	exitCode, err := strconv.Atoi(statusText)
 	if err != nil {
 		return "", 0, fmt.Errorf("parse multipass guest exit status %q: %w", statusText, err)
+	}
+	if exitCode < 0 || exitCode > 255 || statusText != strconv.Itoa(exitCode) {
+		return "", 0, fmt.Errorf("parse multipass guest exit status: invalid status %q", statusText)
 	}
 	return content, exitCode, nil
 }

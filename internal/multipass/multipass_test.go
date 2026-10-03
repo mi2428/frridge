@@ -1,6 +1,7 @@
 package multipass
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -638,13 +639,73 @@ func TestBuildShellScriptWrapsDirAndEnv(t *testing.T) {
 	}
 }
 
-func TestStripOutputBannerReturnsOnlyCommandOutput(t *testing.T) {
+func TestParseShellOutputRejectsIncompleteOrInvalidResponse(t *testing.T) {
 	t.Parallel()
 
 	markers := shellMarkers{output: "output-token", status: "status-token="}
-	output := "banner\n" + markers.output + "\naarch64\n"
-	if got, want := stripOutputBanner(output, markers), "aarch64\n"; got != want {
-		t.Fatalf("stripOutputBanner() = %q, want %q", got, want)
+	for _, test := range []struct {
+		name string
+		raw  string
+	}{
+		{"no markers", "aarch64\n"},
+		{"missing output marker", markers.status + "0\n"},
+		{"missing status marker", markers.output + "\naarch64\n"},
+		{"reversed markers", markers.status + "0\n" + markers.output + "\n"},
+		{"empty status", markers.output + "\n" + markers.status + "\n"},
+		{"truncated status", markers.output + "\n" + markers.status},
+		{"missing status terminator", markers.output + "\n" + markers.status + "0"},
+		{"malformed status", markers.output + "\n" + markers.status + "invalid\n"},
+		{"negative status", markers.output + "\n" + markers.status + "-1\n"},
+		{"out of range status", markers.output + "\n" + markers.status + "256\n"},
+		{"signed status", markers.output + "\n" + markers.status + "+0\n"},
+		{"trailing data", markers.output + "\n" + markers.status + "0\nextra\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := parseShellOutput(test.raw, markers); err == nil {
+				t.Fatalf("parseShellOutput(%q) succeeded, want protocol error", test.raw)
+			}
+		})
+	}
+}
+
+func TestSystemCLIShellResponse(t *testing.T) {
+	binDir := t.TempDir()
+	cliPath := filepath.Join(binDir, "multipass")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cli := newSystemCLI()
+
+	for _, test := range []struct {
+		name    string
+		shell   string
+		command []string
+		wantErr string
+	}{
+		{"success", "exec /bin/bash", []string{"printf", "hello"}, ""},
+		{"guest failure", "exec /bin/bash", []string{"bash", "-c", "exit 17"}, "guest command exited with status 17"},
+		{"missing markers", "exit 0", []string{"true"}, "missing output marker"},
+		{"missing status", "exec /bin/bash", []string{"exit", "0"}, "missing status marker"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(cliPath, []byte("#!/bin/sh\n"+test.shell+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var stdout bytes.Buffer
+			spec := ExecSpec{Command: test.command, Stdout: &stdout}
+			output, outputErr := cli.Output(context.Background(), "fake", spec)
+			execErr := cli.Exec(context.Background(), "fake", spec)
+			for _, err := range []error{outputErr, execErr} {
+				if test.wantErr == "" {
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("shell error = %v, want %q", err, test.wantErr)
+				}
+			}
+			if test.wantErr == "" && (output != "hello" || stdout.String() != "hello") {
+				t.Fatalf("Output = %q, Exec stdout = %q, want hello", output, stdout.String())
+			}
+		})
 	}
 }
 
