@@ -4,12 +4,9 @@ ARG UBUNTU_VERSION=24.04
 ARG FRR_GIT_REF=master
 ARG LIBYANG_GIT_REF=v2.1.148
 
-FROM ubuntu:${UBUNTU_VERSION} AS build
+FROM ubuntu:${UBUNTU_VERSION} AS build-tools
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-ARG FRR_GIT_REF
-ARG LIBYANG_GIT_REF
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CCACHE_DIR=/root/.cache/ccache
@@ -51,12 +48,24 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     texinfo \
  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /src/libyang
+FROM build-tools AS source
 
-RUN git init . \
- && git remote add origin https://github.com/CESNET/libyang.git \
- && git fetch --depth 1 origin "${LIBYANG_GIT_REF}" \
- && git checkout --detach FETCH_HEAD
+ARG FRR_GIT_REF
+ARG LIBYANG_GIT_REF
+
+RUN git init /src/libyang \
+ && git -C /src/libyang fetch --depth 1 -- https://github.com/CESNET/libyang.git "${LIBYANG_GIT_REF}" \
+ && git -C /src/libyang checkout --detach FETCH_HEAD \
+ && git init /src/frr \
+ && git -C /src/frr fetch --depth 1 -- https://github.com/FRRouting/frr.git "${FRR_GIT_REF}" \
+ && git -C /src/frr checkout --detach FETCH_HEAD \
+ && printf 'FRR_COMMIT=%s\nLIBYANG_COMMIT=%s\n' \
+      "$(git -C /src/frr rev-parse HEAD)" "$(git -C /src/libyang rev-parse HEAD)" \
+      > /src/source-revisions
+
+FROM source AS build
+
+WORKDIR /src/libyang
 
 RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
     CC="ccache gcc" CXX="ccache g++" \
@@ -71,11 +80,6 @@ RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
  && cmake --install build --prefix /opt/frr-root/usr
 
 WORKDIR /src/frr
-
-RUN git init . \
- && git remote add origin https://github.com/FRRouting/frr.git \
- && git fetch --depth 1 origin "${FRR_GIT_REF}" \
- && git checkout --detach FETCH_HEAD
 
 RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
     ./bootstrap.sh \
@@ -97,6 +101,10 @@ RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
 FROM ubuntu:${UBUNTU_VERSION} AS runtime
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG FRR_GIT_REF
+ARG LIBYANG_GIT_REF
+LABEL io.frridge.frr-ref="${FRR_GIT_REF}" io.frridge.libyang-ref="${LIBYANG_GIT_REF}"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -135,6 +143,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /opt/frr-root/ /
+COPY --from=source /src/source-revisions /usr/share/frridge/source-revisions
 COPY docker/frr/docker-start /usr/lib/frr/docker-start
 
 RUN chmod 0755 /usr/lib/frr/docker-start \

@@ -113,6 +113,19 @@ func TestConsoleCommandAllowsOptionalFile(t *testing.T) {
 	}
 }
 
+func TestRefreshImageFlagStaysOnHostRequest(t *testing.T) {
+	t.Parallel()
+	service := &fakeService{}
+	cmd := newRootCommand(service)
+	cmd.SetArgs([]string{"exec", "--refresh-image", "--", "true"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !service.execReq.RefreshImage || strings.Join(service.execCommand, " ") != "true" {
+		t.Fatalf("request = %#v, command = %v", service.execReq, service.execCommand)
+	}
+}
+
 func TestUpCommandRejectsMountOutsideHostDir(t *testing.T) {
 	t.Parallel()
 

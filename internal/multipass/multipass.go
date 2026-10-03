@@ -4,8 +4,10 @@ package multipass
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,9 +46,10 @@ type Service interface {
 // Request describes the host-side inputs required to project one workspace into
 // a Multipass VM.
 type Request struct {
-	Instance Instance
-	RepoDir  string
-	HostDir  string
+	Instance     Instance
+	RepoDir      string
+	HostDir      string
+	RefreshImage bool
 }
 
 // Instance describes the guest VM that should host the Linux-native frridge
@@ -118,6 +121,7 @@ type resolvedRequest struct {
 	guestHostDir string
 	guestRepoDir string
 	guestWorkDir string
+	refreshImage bool
 }
 
 // Manager implements Service with the system Multipass CLI plus host-side
@@ -167,11 +171,15 @@ func defaultImageBuilder() ImageBuilder {
 // mounted, any missing guest dependencies are repaired, and the Linux frridge
 // binary is present.
 func (m *Manager) prepare(ctx context.Context, req Request) (Environment, error) {
+	return m.prepareWithImage(ctx, req, true)
+}
+
+func (m *Manager) prepareWithImage(ctx context.Context, req Request, needsImage bool) (Environment, error) {
 	resolved, err := resolveRequest(req)
 	if err != nil {
 		return Environment{}, err
 	}
-	return m.ensure(ctx, resolved)
+	return m.ensure(ctx, resolved, needsImage)
 }
 
 // Shell opens an interactive login shell rooted at the mounted host directory.
@@ -223,7 +231,7 @@ func (m *Manager) Frridge(ctx context.Context, req Request, args []string) error
 		return fmt.Errorf("frridge arguments must not be empty")
 	}
 
-	env, err := m.prepare(ctx, req)
+	env, err := m.prepareWithImage(ctx, req, firstFrridgeCommand(args) != "migrate-state")
 	if err != nil {
 		return err
 	}
@@ -245,7 +253,7 @@ func (m *Manager) Frridge(ctx context.Context, req Request, args []string) error
 	})
 }
 
-func (m *Manager) ensure(ctx context.Context, req resolvedRequest) (Environment, error) {
+func (m *Manager) ensure(ctx context.Context, req resolvedRequest, needsImage bool) (Environment, error) {
 	if err := m.ensureInstance(ctx, req.instance); err != nil {
 		return Environment{}, err
 	}
@@ -286,8 +294,10 @@ func (m *Manager) ensure(ctx context.Context, req resolvedRequest) (Environment,
 	if err := m.bootstrapGuest(ctx, env); err != nil {
 		return Environment{}, err
 	}
-	if err := m.ensureGuestImage(ctx, env, goarch); err != nil {
-		return Environment{}, err
+	if needsImage {
+		if err := m.ensureGuestImage(ctx, env, goarch, req.refreshImage); err != nil {
+			return Environment{}, err
+		}
 	}
 	stagedBinary := path.Join(env.GuestBinaryDir, fmt.Sprintf(".frridge-%d.tmp", os.Getpid()))
 	if err := m.cli.Transfer(ctx, build.Path, req.instance.Name+":"+stagedBinary); err != nil {
@@ -332,53 +342,68 @@ func (m *Manager) ensureInstance(ctx context.Context, inst Instance) error {
 
 // ensureGuestImage refreshes the repo's companion FRR image inside the guest so
 // examples that reference frridge-frr:latest work on a fresh Multipass VM.
-func (m *Manager) ensureGuestImage(ctx context.Context, env Environment, goarch string) error {
+func (m *Manager) ensureGuestImage(ctx context.Context, env Environment, goarch string, refresh bool) error {
 	if _, err := os.Stat(filepath.Join(env.RepoDir, "Dockerfile")); err != nil {
 		if os.IsNotExist(err) {
+			if refresh {
+				return fmt.Errorf("cannot refresh companion image: checkout has no Dockerfile")
+			}
 			return nil
 		}
 		return fmt.Errorf("stat Dockerfile: %w", err)
 	}
 
-	buildID, err := imageBuildID(env.RepoDir, goarch)
+	inputs, err := imageInputsID(env.RepoDir, goarch)
 	if err != nil {
 		return err
 	}
-	currentID, err := m.guestImageBuildID(ctx, env, defaultGuestImage)
+	current, err := m.guestImageIdentity(ctx, env, defaultGuestImage)
 	if err != nil {
 		return err
 	}
-	if currentID == buildID {
-		return nil
+	if !refresh {
+		// A matching guest remains authoritative until explicit refresh. This
+		// also prevents an older host archive rolling back a guest-only refresh.
+		if current.Inputs == inputs {
+			return nil
+		}
+		legacyID, err := imageBuildID(env.RepoDir, goarch)
+		if err != nil {
+			return err
+		}
+		if noImageRefOverrides() && current.LegacyID == legacyID {
+			return nil
+		}
+		if m.imageBuilder != nil {
+			cached, err := m.imageBuilder.Cached(env.RepoDir, goarch)
+			if err != nil {
+				return err
+			}
+			if cached.ID != "" {
+				return m.importGuestImageArchive(ctx, env, cached, inputs)
+			}
+		}
 	}
 
-	var hostErr error
 	if m.imageBuilder != nil {
 		build, err := m.imageBuilder.Build(ctx, env.RepoDir, goarch)
 		if err == nil {
-			if err := m.importGuestImageArchive(ctx, env, build); err == nil {
-				return nil
-			} else {
-				hostErr = err
-			}
-		} else {
-			hostErr = err
+			return m.importGuestImageArchive(ctx, env, build, inputs)
+		}
+		// Only host Docker unavailability selects the documented guest path.
+		// Remote, build, archive and import failures must remain visible.
+		if !errors.Is(err, ErrHostDockerUnavailable) {
+			return err
 		}
 	}
-
-	if err := m.buildGuestImage(ctx, env, buildID); err != nil {
-		if hostErr != nil {
-			return fmt.Errorf("refresh companion image via host cache: %v; guest fallback failed: %w", hostErr, err)
-		}
-		return err
-	}
-	return nil
+	return m.buildGuestImage(ctx, env, inputs)
 }
 
-func (m *Manager) guestImageBuildID(ctx context.Context, env Environment, image string) (string, error) {
+func (m *Manager) guestImageIdentity(ctx context.Context, env Environment, image string) (imageIdentity, error) {
 	const script = `
 set -euo pipefail
-if sudo docker image inspect "$1" >/dev/null 2>&1; then
+images=$(sudo docker image ls --format '{{.ID}}' "$1")
+if [ -n "$images" ]; then
   sudo docker image inspect --format "$2" "$1"
 fi
 `
@@ -390,27 +415,26 @@ fi
 			strings.TrimSpace(script),
 			"bash",
 			image,
-			`{{ index .Config.Labels "` + guestImageBuildIDLabel + `" }}`,
+			imageIdentityFormat,
 		},
 		Dir: env.GuestHostDir,
 	})
 	if err != nil {
-		return "", err
+		return imageIdentity{}, err
 	}
-	return strings.TrimSpace(out), nil
+	if strings.TrimSpace(out) == "" {
+		return imageIdentity{}, nil
+	}
+	return parseImageIdentity(out)
 }
 
-func (m *Manager) importGuestImageArchive(ctx context.Context, env Environment, build ImageBuildResult) error {
+func (m *Manager) importGuestImageArchive(ctx context.Context, env Environment, build ImageBuildResult, inputs string) error {
 	guestArchive := path.Join(env.GuestBinaryDir, "."+build.ID+".tar")
 	if err := m.cli.Transfer(ctx, build.Path, env.InstanceName+":"+guestArchive); err != nil {
 		return fmt.Errorf("transfer companion image archive: %w", err)
 	}
 
-	for _, command := range [][]string{
-		{"sudo", "docker", "load", "-i", guestArchive},
-		{"sudo", "docker", "image", "tag", build.Tag, defaultGuestImage},
-		{"rm", "-f", guestArchive},
-	} {
+	for _, command := range [][]string{{"sudo", "docker", "load", "-i", guestArchive}, {"rm", "-f", guestArchive}} {
 		if err := m.cli.Exec(ctx, env.InstanceName, ExecSpec{
 			Command: command,
 			Dir:     env.GuestHostDir,
@@ -418,22 +442,50 @@ func (m *Manager) importGuestImageArchive(ctx context.Context, env Environment, 
 			return err
 		}
 	}
-	return nil
+	info, err := m.guestImageIdentity(ctx, env, build.Tag)
+	if err != nil {
+		return err
+	}
+	if (!build.Legacy && (info.ID != "sha256:"+build.ID || info.Inputs != inputs)) || (build.Legacy && info.LegacyID != build.ID) {
+		return fmt.Errorf("imported companion image identity mismatch")
+	}
+	return m.cli.Exec(ctx, env.InstanceName, ExecSpec{
+		Command: []string{"sudo", "docker", "image", "tag", info.ID, defaultGuestImage},
+		Dir:     env.GuestHostDir,
+	})
 }
 
-func (m *Manager) buildGuestImage(ctx context.Context, env Environment, buildID string) error {
+func (m *Manager) buildGuestImage(ctx context.Context, env Environment, inputs string) error {
+	iidPath := path.Join(env.GuestBinaryDir, ".image-"+rand.Text()+".id")
+	if err := m.cli.Exec(ctx, env.InstanceName, ExecSpec{
+		Command: append([]string{"sudo", "docker"}, imageBuildArgs(inputs, iidPath)...),
+		Dir:     env.GuestRepoDir,
+	}); err != nil {
+		return err
+	}
+	const script = `
+set -euo pipefail
+id=$(cat "$1")
+sudo docker image inspect --format "$2" "$id"
+rm -f "$1"
+`
+	out, err := m.cli.Output(ctx, env.InstanceName, ExecSpec{
+		Command: []string{"bash", "-lc", strings.TrimSpace(script), "bash", iidPath, imageIdentityFormat},
+		Dir:     env.GuestRepoDir,
+	})
+	if err != nil {
+		return err
+	}
+	info, err := parseImageIdentity(out)
+	if err != nil {
+		return err
+	}
+	if info.Inputs != inputs {
+		return fmt.Errorf("built guest companion image inputs mismatch")
+	}
 	return m.cli.Exec(ctx, env.InstanceName, ExecSpec{
-		Command: []string{
-			"sudo",
-			"docker",
-			"buildx",
-			"build",
-			"--load",
-			"--label", guestImageBuildIDLabel + "=" + buildID,
-			"-t", defaultGuestImage,
-			".",
-		},
-		Dir: env.GuestRepoDir,
+		Command: []string{"sudo", "docker", "image", "tag", info.ID, defaultGuestImage},
+		Dir:     env.GuestHostDir,
 	})
 }
 
@@ -547,6 +599,7 @@ func resolveRequest(req Request) (resolvedRequest, error) {
 		guestHostDir: guestHostDir,
 		guestRepoDir: guestRepoDir,
 		guestWorkDir: path.Join(defaultGuestStateRoot, shortHash(hostDir)),
+		refreshImage: req.RefreshImage,
 	}, nil
 }
 

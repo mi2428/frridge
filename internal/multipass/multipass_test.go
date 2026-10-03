@@ -3,6 +3,7 @@ package multipass
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -16,21 +17,25 @@ import (
 )
 
 type fakeCLI struct {
-	missing     bool
-	info        Info
-	arch        string
-	imageBuilds map[string]string
-	launched    []Instance
-	started     []string
-	mounts      [][2]string
-	transfers   [][2]string
-	execs       []ExecSpec
-	outputErr   error
-	launchErr   error
-	startErr    error
-	mountErr    error
-	transferErr error
-	execErr     error
+	missing      bool
+	info         Info
+	arch         string
+	imageBuilds  map[string]string
+	identities   map[string]imageIdentity
+	guestBuilt   imageIdentity
+	imageQueries int
+	execHook     func(ExecSpec) error
+	launched     []Instance
+	started      []string
+	mounts       [][2]string
+	transfers    [][2]string
+	execs        []ExecSpec
+	outputErr    error
+	launchErr    error
+	startErr     error
+	mountErr     error
+	transferErr  error
+	execErr      error
 }
 
 func (f *fakeCLI) Info(context.Context, string) (Info, error) {
@@ -95,6 +100,32 @@ func (f *fakeCLI) Exec(_ context.Context, _ string, spec ExecSpec) error {
 		return f.execErr
 	}
 	f.execs = append(f.execs, spec)
+	if f.execHook != nil {
+		if err := f.execHook(spec); err != nil {
+			return err
+		}
+	}
+	if len(spec.Command) >= 4 && slices.Equal(spec.Command[:4], []string{"sudo", "docker", "buildx", "build"}) {
+		f.guestBuilt.ID = "sha256:" + testImageID
+		for _, arg := range spec.Command {
+			if inputs, ok := strings.CutPrefix(arg, guestImageInputsLabel+"="); ok {
+				f.guestBuilt.Inputs = inputs
+			}
+		}
+	}
+	if len(spec.Command) == 6 && slices.Equal(spec.Command[:4], []string{"sudo", "docker", "image", "tag"}) {
+		if f.identities == nil {
+			f.identities = make(map[string]imageIdentity)
+		}
+		info := f.guestBuilt
+		for _, candidate := range f.identities {
+			if candidate.ID == spec.Command[4] {
+				info = candidate
+				break
+			}
+		}
+		f.identities[spec.Command[5]] = info
+	}
 	return nil
 }
 
@@ -107,8 +138,18 @@ func (f *fakeCLI) Output(_ context.Context, _ string, spec ExecSpec) (string, er
 	}
 	if len(spec.Command) >= 6 && spec.Command[0] == "bash" && spec.Command[1] == "-lc" {
 		if strings.Contains(spec.Command[2], "docker image inspect") {
+			f.imageQueries++
+			if strings.Contains(spec.Command[2], "id=$(cat") {
+				data, _ := json.Marshal(f.guestBuilt)
+				return string(data), nil
+			}
+			if info, ok := f.identities[spec.Command[4]]; ok {
+				data, _ := json.Marshal(info)
+				return string(data), nil
+			}
 			if buildID, ok := f.imageBuilds[spec.Command[4]]; ok {
-				return buildID + "\n", nil
+				data, _ := json.Marshal(imageIdentity{ID: "sha256:" + testImageID, LegacyID: buildID})
+				return string(data), nil
 			}
 			return "", nil
 		}
@@ -129,13 +170,20 @@ func (b *fakeBuilder) Build(_ context.Context, repoDir, goarch string) (BuildRes
 }
 
 type fakeImageBuilder struct {
-	result ImageBuildResult
-	repo   string
-	arch   string
-	err    error
+	result     ImageBuildResult
+	cached     ImageBuildResult
+	buildCalls int
+	repo       string
+	arch       string
+	err        error
+}
+
+func (b *fakeImageBuilder) Cached(_, _ string) (ImageBuildResult, error) {
+	return b.cached, nil
 }
 
 func (b *fakeImageBuilder) Build(_ context.Context, repoDir, goarch string) (ImageBuildResult, error) {
+	b.buildCalls++
 	b.repo = repoDir
 	b.arch = goarch
 	if b.err != nil {
@@ -161,8 +209,9 @@ func TestResolveRequestDefaultsAndSharedMount(t *testing.T) {
 	repoDir := t.TempDir()
 
 	resolved, err := resolveRequest(Request{
-		RepoDir: repoDir,
-		HostDir: repoDir,
+		RepoDir:      repoDir,
+		HostDir:      repoDir,
+		RefreshImage: true,
 	})
 	if err != nil {
 		t.Fatalf("resolveRequest() error = %v", err)
@@ -178,6 +227,9 @@ func TestResolveRequestDefaultsAndSharedMount(t *testing.T) {
 	}
 	if !strings.HasPrefix(resolved.guestWorkDir, defaultGuestStateRoot+"/") {
 		t.Fatalf("guestWorkDir = %q, want %q prefix", resolved.guestWorkDir, defaultGuestStateRoot+"/")
+	}
+	if !resolved.refreshImage {
+		t.Fatal("resolveRequest dropped explicit image refresh")
 	}
 }
 
@@ -291,6 +343,23 @@ func TestManagerFrridgeWrapsGuestBinaryAndWorkDir(t *testing.T) {
 	}
 }
 
+func TestManagerMigrationPreparesBinaryWithoutCompanionImage(t *testing.T) {
+	t.Parallel()
+	repo := imageTestRepo(t)
+	cli := &fakeCLI{info: Info{State: "Running"}, arch: "x86_64"}
+	imageBuilder := &fakeImageBuilder{err: fmt.Errorf("companion image must not be required for migration")}
+	manager := NewManagerWithImageBuilder(cli, &fakeBuilder{result: BuildResult{ID: "binary-amd64", Path: "/binary"}}, imageBuilder)
+	if err := manager.Frridge(t.Context(), Request{RepoDir: repo, HostDir: repo, RefreshImage: true}, []string{"--file", "lab.yaml", "migrate-state"}); err != nil {
+		t.Fatal(err)
+	}
+	if imageBuilder.buildCalls != 0 || cli.imageQueries != 0 || len(cli.transfers) != 1 {
+		t.Fatal("migration required an image instead of only preparing the guest binary")
+	}
+	if command := cli.execs[len(cli.execs)-1].Command; command[len(command)-1] != "migrate-state" {
+		t.Fatalf("migration was not forwarded: %v", command)
+	}
+}
+
 func TestManagerPrepareImportsCompanionImageArchiveWhenHostCacheAvailable(t *testing.T) {
 	t.Parallel()
 
@@ -306,6 +375,9 @@ func TestManagerPrepareImportsCompanionImageArchiveWhenHostCacheAvailable(t *tes
 			Mounts: make(map[string]string),
 		},
 		arch: "x86_64\n",
+		identities: map[string]imageIdentity{
+			hostImageTag(testImageID): {ID: "sha256:" + testImageID},
+		},
 	}
 	builder := &fakeBuilder{
 		result: BuildResult{
@@ -315,11 +387,16 @@ func TestManagerPrepareImportsCompanionImageArchiveWhenHostCacheAvailable(t *tes
 	}
 	imageBuilder := &fakeImageBuilder{
 		result: ImageBuildResult{
-			ID:   "image-amd64",
+			ID:   testImageID,
 			Path: filepath.Join(t.TempDir(), "image.tar"),
-			Tag:  "frridge-mp-cache:image-amd64",
+			Tag:  hostImageTag(testImageID),
 		},
 	}
+	inputs, err := imageInputsID(repoDir, "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.identities[hostImageTag(testImageID)] = imageIdentity{ID: "sha256:" + testImageID, Inputs: inputs}
 	manager := NewManagerWithImageBuilder(cli, builder, imageBuilder)
 
 	if _, err := manager.prepare(context.Background(), Request{
@@ -343,7 +420,7 @@ func TestManagerPrepareImportsCompanionImageArchiveWhenHostCacheAvailable(t *tes
 	}
 
 	foundArchiveTransfer := false
-	wantArchiveTarget := "mp-lab:" + path.Join(defaultGuestBinaryRoot, "digest-amd64", ".image-amd64.tar")
+	wantArchiveTarget := "mp-lab:" + path.Join(defaultGuestBinaryRoot, "digest-amd64", "."+testImageID+".tar")
 	for _, transfer := range cli.transfers {
 		if transfer[0] != imageBuilder.result.Path {
 			continue
@@ -359,7 +436,7 @@ func TestManagerPrepareImportsCompanionImageArchiveWhenHostCacheAvailable(t *tes
 
 	foundImport := false
 	for _, spec := range cli.execs {
-		if slices.Equal(spec.Command, []string{"sudo", "docker", "load", "-i", path.Join(defaultGuestBinaryRoot, "digest-amd64", ".image-amd64.tar")}) {
+		if slices.Equal(spec.Command, []string{"sudo", "docker", "load", "-i", path.Join(defaultGuestBinaryRoot, "digest-amd64", "."+testImageID+".tar")}) {
 			foundImport = true
 		}
 		if len(spec.Command) >= 4 && slices.Equal(spec.Command[:4], []string{"sudo", "docker", "buildx", "build"}) {
@@ -412,16 +489,14 @@ func TestManagerPrepareFallsBackToGuestImageBuildWhenHostCacheUnavailable(t *tes
 
 	foundGuestBuild := false
 	for _, spec := range cli.execs {
-		if slices.Equal(spec.Command, []string{
-			"sudo",
-			"docker",
-			"buildx",
-			"build",
-			"--load",
-			"--label", guestImageBuildIDLabel + "=" + mustImageBuildID(t, repoDir, "amd64"),
-			"-t", defaultGuestImage,
-			".",
-		}) {
+		if len(spec.Command) >= 4 && slices.Equal(spec.Command[:4], []string{"sudo", "docker", "buildx", "build"}) {
+			inputs, err := imageInputsID(repoDir, "amd64")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(spec.Command, guestImageInputsLabel+"="+inputs) || slices.Contains(spec.Command, "-t") || !slices.Contains(spec.Command, "--no-cache-filter") {
+				t.Fatalf("guest build does not stage current sources: %v", spec.Command)
+			}
 			foundGuestBuild = true
 			break
 		}

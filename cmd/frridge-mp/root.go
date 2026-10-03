@@ -38,6 +38,7 @@ func newRootCommand(service multipass.Service) *cobra.Command {
 	flags.StringVar(&req.Instance.Disk, "disk", "", "Disk size used when the instance is first launched")
 	flags.StringVar(&req.RepoDir, "repo-dir", "", "Path to the frridge source tree used to build the guest binary")
 	flags.StringVar(&req.HostDir, "host-dir", "", "Host directory mounted into the guest for topology files and lab assets")
+	flags.BoolVar(&req.RefreshImage, "refresh-image", false, "Refresh companion image sources instead of reusing the cached image")
 
 	shellCmd := &cobra.Command{
 		Use:   "shell",

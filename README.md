@@ -18,7 +18,13 @@ $ make -C frridge image
 ```
 
 The bundled `Dockerfile` builds the default `frridge-frr:latest` companion
-image from the latest FRR source.
+image from FRR `master` and libyang `v2.1.148` by default. `make image` fetches
+the current sources on each invocation; `FRR_GIT_REF` and `LIBYANG_GIT_REF` can
+override these refs (branches, tags, or commits). Each image records the fetched
+commit IDs in `/usr/share/frridge/source-revisions`; `docker image inspect
+frridge-frr:latest --format '{{.Id}}'` identifies the actual built image.
+Without overrides, Docker uses the checkout's own `ARG` defaults, including
+custom pinned refs; the host tools do not replace them with bundled defaults.
 You can still point a topology at `frrouting/frr:<tag>` or another image that
 already contains FRR and `vtysh`.
 
@@ -153,6 +159,7 @@ Flags:
       --image string      Ubuntu image used when the instance is first launched
       --instance string   Multipass instance name
       --memory string     Memory size used when the instance is first launched
+      --refresh-image     Refresh companion image sources instead of reusing the cached image
       --repo-dir string   Path to the frridge source tree used to build the guest binary
   -v, --version           version for frridge-mp
 
@@ -161,7 +168,21 @@ Use "frridge-mp [command] --help" for more information about a command.
 
 `frridge-mp` lab commands auto-create or update the guest VM, mount the requested host directory, and refresh the guest-local `frridge` binary as needed.
 
-When the repo contains a companion `Dockerfile`, `frridge-mp` first tries to reuse host-side Docker cache by building and exporting the image on macOS, then imports that archive into the guest.
+When the repo contains a companion `Dockerfile`, `frridge-mp` reuses a matching
+guest image (preferred) or host archive without querying upstream. Local Docker
+inputs, guest architecture, and `FRR_GIT_REF` / `LIBYANG_GIT_REF` select the cache;
+upstream changes alone do not update it. To deliberately fetch current sources,
+run `frridge-mp --refresh-image shell` (or add the flag to a lab command).
+Each matching guest keeps its own cached image until explicitly refreshed;
+an older host archive cannot roll back a guest-only refresh.
+Fresh builds and explicit refreshes re-run the Docker `source` stage, materialize
+the selected revisions, and key archives by the actual Docker image ID. Host
+metadata is published only after export completes; the guest's `latest` tag is
+changed only after build/import and identity verification succeed. Remote or
+build failures are reported, retaining the previous usable archive and guest tag.
+Existing matching legacy caches can still be reused offline with the Dockerfile's
+refs (no explicit overrides), but their source revisions are unknown; use explicit
+refresh to replace them. Changed local inputs invalidate those caches normally.
 If host Docker is unavailable, it falls back to building the image inside the guest VM.
 
 The common flow is:

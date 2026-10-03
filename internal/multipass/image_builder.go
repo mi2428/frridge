@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 const (
 	defaultHostImageCacheTagPrefix = "frridge-mp-cache"
 	guestImageBuildIDLabel         = "io.frridge.build-id"
+	guestImageInputsLabel          = "io.frridge.build-inputs"
 )
 
 var (
@@ -38,14 +40,16 @@ var (
 
 // ImageBuilder produces cached companion image archives on the host.
 type ImageBuilder interface {
+	Cached(repoDir, goarch string) (ImageBuildResult, error)
 	Build(ctx context.Context, repoDir, goarch string) (ImageBuildResult, error)
 }
 
 // ImageBuildResult identifies a cached Docker image archive on the host.
 type ImageBuildResult struct {
-	ID   string
-	Path string
-	Tag  string
+	ID     string
+	Path   string
+	Tag    string
+	Legacy bool
 }
 
 // DockerImageBuilder builds the repo's companion image on the host with Docker
@@ -67,40 +71,70 @@ func NewDockerImageBuilder(cacheDir string) (*DockerImageBuilder, error) {
 	return &DockerImageBuilder{cacheDir: cacheDir}, nil
 }
 
-// Build returns a cached companion image archive keyed by the Docker build
-// context and requested guest architecture.
-func (b *DockerImageBuilder) Build(ctx context.Context, repoDir, goarch string) (ImageBuildResult, error) {
-	id, err := imageBuildID(repoDir, goarch)
+// Cached looks up local metadata without contacting Docker or upstream. Legacy
+// archives remain reusable, but their source revisions are unknown until refresh.
+func (b *DockerImageBuilder) Cached(repoDir, goarch string) (ImageBuildResult, error) {
+	inputs, err := imageInputsID(repoDir, goarch)
 	if err != nil {
 		return ImageBuildResult{}, err
 	}
-
 	outputDir := filepath.Join(b.cacheDir, "images")
-	outputPath := filepath.Join(outputDir, id+".tar")
-	result := ImageBuildResult{
-		ID:   id,
-		Path: outputPath,
-		Tag:  hostImageTag(id),
-	}
-	if _, err := os.Stat(outputPath); err == nil {
+	data, err := os.ReadFile(filepath.Join(outputDir, inputs+".id"))
+	if err == nil {
+		id, err := parseDockerImageID(strings.TrimSpace(string(data)))
+		if err != nil {
+			return ImageBuildResult{}, fmt.Errorf("read cached companion image identity: %w", err)
+		}
+		result := imageArchive(outputDir, id)
+		if err := checkImageArchive(result.Path); err != nil {
+			return ImageBuildResult{}, err
+		}
 		return result, nil
-	} else if err != nil && !os.IsNotExist(err) {
-		return ImageBuildResult{}, fmt.Errorf("stat cached companion image archive: %w", err)
 	}
+	if !os.IsNotExist(err) {
+		return ImageBuildResult{}, fmt.Errorf("read cached companion image metadata: %w", err)
+	}
+	if !noImageRefOverrides() {
+		return ImageBuildResult{}, nil
+	}
+	legacyID, err := imageBuildID(repoDir, goarch)
+	if err != nil {
+		return ImageBuildResult{}, err
+	}
+	result := imageArchive(outputDir, legacyID)
+	if _, err := os.Stat(result.Path); os.IsNotExist(err) {
+		return ImageBuildResult{}, nil
+	}
+	if err := checkImageArchive(result.Path); err != nil {
+		return ImageBuildResult{}, err
+	}
+	result.Legacy = true
+	return result, nil
+}
 
+// Build materializes current upstream refs, then publishes an archive keyed by
+// the actual Docker image ID. Call Cached first when refresh was not requested.
+func (b *DockerImageBuilder) Build(ctx context.Context, repoDir, goarch string) (ImageBuildResult, error) {
+	inputs, err := imageInputsID(repoDir, goarch)
+	if err != nil {
+		return ImageBuildResult{}, err
+	}
 	if !hostDockerAvailable(ctx) {
+		if err := ctx.Err(); err != nil {
+			return ImageBuildResult{}, err
+		}
 		return ImageBuildResult{}, ErrHostDockerUnavailable
 	}
-
 	platform, err := dockerPlatform(goarch)
 	if err != nil {
 		return ImageBuildResult{}, err
 	}
+	outputDir := filepath.Join(b.cacheDir, "images")
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return ImageBuildResult{}, fmt.Errorf("create image cache dir: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(outputDir, id+"-*.tar")
+	tmpFile, err := os.CreateTemp(outputDir, ".refresh-*.tar")
 	if err != nil {
 		return ImageBuildResult{}, fmt.Errorf("create temp image archive: %w", err)
 	}
@@ -110,18 +144,113 @@ func (b *DockerImageBuilder) Build(ctx context.Context, repoDir, goarch string) 
 		return ImageBuildResult{}, fmt.Errorf("close temp image archive: %w", err)
 	}
 	defer os.Remove(tmpPath)
+	iidPath := tmpPath + ".id"
+	defer os.Remove(iidPath)
 
-	if err := buildHostImage(ctx, repoDir, platform, result.Tag, result.ID); err != nil {
+	if err := buildHostImage(ctx, repoDir, platform, inputs, iidPath); err != nil {
+		return ImageBuildResult{}, err
+	}
+	data, err := os.ReadFile(iidPath)
+	if err != nil {
+		return ImageBuildResult{}, fmt.Errorf("read built companion image identity: %w", err)
+	}
+	id, err := parseDockerImageID(strings.TrimSpace(string(data)))
+	if err != nil {
+		return ImageBuildResult{}, err
+	}
+	info, err := inspectHostImage(ctx, "sha256:"+id)
+	if err != nil {
+		return ImageBuildResult{}, err
+	}
+	if info.ID != "sha256:"+id || info.Inputs != inputs {
+		return ImageBuildResult{}, fmt.Errorf("built companion image identity or inputs mismatch")
+	}
+	result := imageArchive(outputDir, id)
+	if err := runHostDocker(ctx, "tag companion image", "image", "tag", info.ID, result.Tag); err != nil {
 		return ImageBuildResult{}, err
 	}
 	if err := saveHostImage(ctx, result.Tag, tmpPath); err != nil {
 		return ImageBuildResult{}, err
 	}
-	if err := os.Rename(tmpPath, outputPath); err != nil {
+	if err := checkImageArchive(tmpPath); err != nil {
+		return ImageBuildResult{}, err
+	}
+	if err := os.Rename(tmpPath, result.Path); err != nil {
 		return ImageBuildResult{}, fmt.Errorf("install cached companion image archive: %w", err)
 	}
-
+	// Publish the lookup only after the complete archive is installed. A failed
+	// refresh leaves the previous lookup/archive available to offline callers.
+	if err := os.Rename(iidPath, filepath.Join(outputDir, inputs+".id")); err != nil {
+		return ImageBuildResult{}, fmt.Errorf("install companion image metadata: %w", err)
+	}
 	return result, nil
+}
+
+func imageArchive(dir, id string) ImageBuildResult {
+	return ImageBuildResult{ID: id, Path: filepath.Join(dir, id+".tar"), Tag: hostImageTag(id)}
+}
+
+func checkImageArchive(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat cached companion image archive: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("companion image archive is not a nonempty regular file")
+	}
+	return nil
+}
+
+func imageRefs() (string, string) {
+	return os.Getenv("FRR_GIT_REF"), os.Getenv("LIBYANG_GIT_REF")
+}
+
+func noImageRefOverrides() bool {
+	frr, libyang := imageRefs()
+	return frr == "" && libyang == ""
+}
+
+func imageInputsID(repoDir, goarch string) (string, error) {
+	if _, err := dockerPlatform(goarch); err != nil {
+		return "", err
+	}
+	local, err := imageBuildID(repoDir, goarch)
+	if err != nil {
+		return "", err
+	}
+	frr, libyang := imageRefs()
+	sum := sha256.Sum256([]byte(local + "\x00" + frr + "\x00" + libyang))
+	return "v2-" + hex.EncodeToString(sum[:]), nil
+}
+
+type imageIdentity struct {
+	ID       string
+	Inputs   string
+	LegacyID string
+}
+
+const imageIdentityFormat = `{"ID":{{json .Id}}{{with .Config.Labels}},"Inputs":{{json (index . "` + guestImageInputsLabel + `")}},"LegacyID":{{json (index . "` + guestImageBuildIDLabel + `")}}{{end}}}`
+
+func parseImageIdentity(output string) (imageIdentity, error) {
+	var info imageIdentity
+	if err := json.Unmarshal([]byte(output), &info); err != nil {
+		return info, fmt.Errorf("decode companion image identity: %w", err)
+	}
+	if _, err := parseDockerImageID(info.ID); err != nil {
+		return info, err
+	}
+	return info, nil
+}
+
+func parseDockerImageID(value string) (string, error) {
+	id, ok := strings.CutPrefix(value, "sha256:")
+	if !ok || len(id) != 64 {
+		return "", fmt.Errorf("invalid companion Docker image ID")
+	}
+	if _, err := hex.DecodeString(id); err != nil || id != strings.ToLower(id) {
+		return "", fmt.Errorf("invalid companion Docker image ID")
+	}
+	return id, nil
 }
 
 func imageBuildID(repoDir, goarch string) (string, error) {
@@ -249,16 +378,30 @@ func hostDockerAvailable(ctx context.Context) bool {
 	return true
 }
 
-func buildHostImage(ctx context.Context, repoDir, platform, tag, id string) error {
+func imageBuildArgs(inputs, iidPath string) []string {
+	frr, libyang := imageRefs()
 	args := []string{
 		"buildx",
 		"build",
 		"--load",
-		"--platform", platform,
-		"--label", guestImageBuildIDLabel + "=" + id,
-		"-t", tag,
-		".",
+		"--no-cache-filter", "source",
+		"--iidfile", iidPath,
+		"--label", guestImageInputsLabel + "=" + inputs,
 	}
+	// Let Docker apply the checkout's ARG defaults; only explicit overrides
+	// should replace a custom Dockerfile's pinned refs.
+	if frr != "" {
+		args = append(args, "--build-arg", "FRR_GIT_REF="+frr)
+	}
+	if libyang != "" {
+		args = append(args, "--build-arg", "LIBYANG_GIT_REF="+libyang)
+	}
+	return append(args, ".")
+}
+
+func buildHostImage(ctx context.Context, repoDir, platform, inputs, iidPath string) error {
+	args := append([]string{"--platform", platform}, imageBuildArgs(inputs, iidPath)[2:]...)
+	args = append([]string{"buildx", "build"}, args...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = repoDir
 
@@ -269,13 +412,24 @@ func buildHostImage(ctx context.Context, repoDir, platform, tag, id string) erro
 	return nil
 }
 
-func saveHostImage(ctx context.Context, tag, archivePath string) error {
-	cmd := exec.CommandContext(ctx, "docker", "save", "-o", archivePath, tag)
-	output, err := cmd.CombinedOutput()
+func inspectHostImage(ctx context.Context, image string) (imageIdentity, error) {
+	output, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", imageIdentityFormat, image).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("export companion image archive on host: %w\n%s", err, strings.TrimSpace(string(output)))
+		return imageIdentity{}, fmt.Errorf("inspect built companion image: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return parseImageIdentity(string(output))
+}
+
+func runHostDocker(ctx context.Context, action string, args ...string) error {
+	output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s: %w\n%s", action, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func saveHostImage(ctx context.Context, tag, archivePath string) error {
+	return runHostDocker(ctx, "export companion image archive on host", "save", "-o", archivePath, tag)
 }
 
 func dockerPlatform(goarch string) (string, error) {
