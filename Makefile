@@ -157,9 +157,8 @@ mp-stop: ## Stop the Multipass VM
 	@multipass stop "$(MP_NAME)"
 
 .PHONY: mp-delete
-mp-delete: ## Delete the Multipass VM and purge local Multipass state
-	-@multipass delete "$(MP_NAME)"
-	-@multipass purge
+mp-delete: ## Permanently delete only the named Multipass VM
+	@multipass delete --purge "$(MP_NAME)"
 
 .PHONY: mp-status
 mp-status: ## Show Multipass VM status

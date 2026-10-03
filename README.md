@@ -351,7 +351,7 @@ Multipass
   mp-shell         Open a shell in the Multipass workspace
   mp-verify        Run the Multipass-backed smoke test
   mp-stop          Stop the Multipass VM
-  mp-delete        Delete the Multipass VM and purge local Multipass state
+  mp-delete        Permanently delete only the named Multipass VM
   mp-status        Show Multipass VM status
 
 Distribution
